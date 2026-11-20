@@ -64,6 +64,22 @@ PY
 export GIT_AUTHOR_NAME="study-bot" GIT_AUTHOR_EMAIL="study-bot@users.noreply.github.com"
 export GIT_COMMITTER_NAME="$GIT_AUTHOR_NAME" GIT_COMMITTER_EMAIL="$GIT_AUTHOR_EMAIL"
 
+# تشغيل الجولة التالية فوراً، بدل الاعتماد على جدولة GitHub (التي قد تتأخر ساعات)
+START_TS=$(date +%s)
+chain_next() {
+  [ "${CHAIN_NEXT_RUN:-false}" = "true" ] || return 0
+  # إذا انهار البوت بسرعة (خطأ إعدادات مثلاً) لا نعيد تشغيله في حلقة لا نهائية
+  if [ $(( $(date +%s) - START_TS )) -lt "${MIN_CHAIN_SECONDS:-600}" ]; then
+    echo "⚠️ الجولة كانت قصيرة جداً، لن أشغّل جولة جديدة تلقائياً"
+    return 0
+  fi
+  if gh workflow run "${WORKFLOW_FILE:-bot.yml}" --ref "${GITHUB_REF_NAME}" >/dev/null 2>&1; then
+    echo "🔁 تم تشغيل الجولة التالية"
+  else
+    echo "⚠️ تعذر تشغيل الجولة التالية؛ الجدولة الاحتياطية ستشغّلها"
+  fi
+}
+
 restore
 LAST_HASH="$( [ -f "$DB_PATH" ] && sha256sum "$DB_PATH" | cut -d' ' -f1 || true)"
 
@@ -96,6 +112,7 @@ wait "$BOT_PID"
 code=$?
 set -e
 save
+chain_next
 # 124/130 = انتهى الوقت المحدد وتوقف البوت بشكل طبيعي
 if [ "$code" -ne 0 ] && [ "$code" -ne 124 ] && [ "$code" -ne 130 ]; then
   echo "❌ البوت توقف بخطأ ($code)"

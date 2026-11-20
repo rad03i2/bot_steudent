@@ -1,9 +1,9 @@
 name: run-bot
 
 # يشغّل البوت على سيرفرات GitHub مجاناً.
-# كل جولة تعمل قرابة 5 ساعات و40 دقيقة (حد GitHub هو 6 ساعات).
-# التشغيل المجدول كل 30 دقيقة ينتظر في الطابور حتى تنتهي الجولة الحالية،
-# ثم يبدأ مباشرة، فيبقى البوت شغالاً بشكل شبه متواصل.
+# كل جولة تعمل قرابة 5 ساعات و40 دقيقة (حد GitHub هو 6 ساعات)، وفي نهايتها
+# تشغّل الجولة التالية بنفسها (workflow_dispatch)، فيبقى البوت شغالاً بشكل متواصل.
+# الجدولة كل 30 دقيقة احتياطية فقط: GitHub لا يضمن توقيتها وقد يؤخرها ساعات.
 on:
   schedule:
     - cron: "*/30 * * * *"
@@ -15,6 +15,7 @@ concurrency:
 
 permissions:
   contents: write
+  actions: write
 
 jobs:
   bot:
@@ -30,6 +31,9 @@ jobs:
       - name: Run bot
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
+          CHAIN_NEXT_RUN: "true"
+          WORKFLOW_FILE: bot.yml
           DATA_KEY: ${{ secrets.DATA_KEY || secrets.TELEGRAM_BOT_TOKEN }}
           ALLOWED_CHAT_IDS: ${{ vars.ALLOWED_CHAT_IDS }}
           TIMEZONE: ${{ vars.TIMEZONE || 'Asia/Baghdad' }}
