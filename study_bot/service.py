@@ -138,6 +138,47 @@ class StudyService:
         return Reply(schedule(tasks, title=title, start=start, end=end, today=today, style=self.style))
 
     # ------------------------------------------------------------------
+    # الصورة والتقويم
+    # ------------------------------------------------------------------
+
+    def week_image(self, next_week: bool = False) -> tuple[bytes, str]:
+        from .image import render_week  # استيراد متأخر: Pillow يُحمّل فقط عند الحاجة
+
+        today = self.today()
+        start, _ = week_bounds(today, self.config.week_start)
+        if next_week:
+            start += timedelta(days=7)
+        tasks = self.db.tasks_between(start, start + timedelta(days=6))
+        title = "جدول الأسبوع القادم" if next_week else "جدول هذا الأسبوع"
+        png = render_week(tasks, start=start, today=today, title=title, style=self.style)
+        caption = f"🗓 {title}" + ("" if next_week else "\nللأسبوع الجاي: /image next")
+        return png, caption
+
+    def calendar_file(self) -> tuple[bytes, str]:
+        from .calendar_export import build_ics, export_range
+
+        start, end = export_range(self.today())
+        tasks = self.db.tasks_between(start, end)
+        caption = (
+            f"📆 ملف التقويم ({len(tasks)} موعد)\n"
+            "افتحه على جوالك وأضفه للتقويم، وراح يذكّرك تلقائياً قبل كل موعد.\n"
+            "إذا انضافت مواعيد جديدة، اطلب الملف مرة ثانية وأضفه."
+        )
+        return build_ics(tasks, self.config.tz), caption
+
+    @staticmethod
+    def special_request(text: str) -> str | None:
+        """طلبات لا تحتاج تحليلاً: صورة الجدول أو ملف التقويم."""
+        t = normalize(text)
+        words = set(t.split())
+        if words & {"صوره", "صورة", "بالصوره"} and words & {"جدول", "الجدول", "الاسبوع", "اسبوع", "للجدول"}:
+            nxt = bool(words & {"الجاي", "القادم", "الياي", "المقبل"})
+            return "image_next" if nxt else "image"
+        if words & {"تقويم", "التقويم", "كاليندر", "calendar", "ics"} and len(words) <= 3:
+            return "calendar"
+        return None
+
+    # ------------------------------------------------------------------
     # الرسائل النصية
     # ------------------------------------------------------------------
 

@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+import io
 import logging
 from datetime import datetime
 
-from telegram import BotCommand, InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram import BotCommand, InlineKeyboardButton, InlineKeyboardMarkup, InputFile, Update
 from telegram.constants import ChatAction, ChatType, ParseMode
 from telegram.error import Forbidden, TelegramError
 from telegram.ext import (
@@ -52,6 +53,8 @@ HELP_TEXT = """\
 /nextweek – الأسبوع القادم
 /upcoming – كل القادم (30 يوم)
 /exams – الامتحانات القادمة
+/image – صورة جدول الأسبوع (و <code>/image next</code> للأسبوع الجاي)
+/calendar – ملف تضيف منه كل المواعيد لتقويم جوالك
 
 ✔️ <b>لما تخلص مهمة:</b> اضغط "✔️ خلصت" على بطاقتها، أو اعمل Reply عليها واكتب <i>خلصت</i>.
 📋 <b>قائمتك الشخصية:</b> اكتب <i>شنو باقي علي؟</i> أو /mytasks
@@ -68,6 +71,8 @@ COMMANDS = [
     ("upcoming", "كل المهام القادمة"),
     ("exams", "الامتحانات القادمة"),
     ("mytasks", "شنو باقي علي؟ (قائمتي الشخصية)"),
+    ("image", "صورة جدول الأسبوع (next للأسبوع الجاي)"),
+    ("calendar", "ملف تقويم لإضافة المواعيد لجوالك"),
     ("reminders", "التذكيرات التلقائية (on/off)"),
     ("help", "طريقة الاستخدام"),
 ]
@@ -166,6 +171,10 @@ async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         replied_to = replied.text or replied.caption
 
     service = _service(context)
+    special = service.special_request(text)
+    if special:
+        await _send_special(update, service, special)
+        return
     if service.analyzer is not None and (is_private or addressed):
         await chat.send_action(ChatAction.TYPING)
 
@@ -198,6 +207,35 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         await query.message.reply_text(
             result.new.text, parse_mode=ParseMode.HTML, reply_markup=_markup(result.new)
         )
+
+
+async def _send_special(update: Update, service: StudyService, kind: str) -> None:
+    message = update.effective_message
+    chat = update.effective_chat
+    assert message is not None and chat is not None
+    if kind in ("image", "image_next"):
+        await chat.send_action(ChatAction.UPLOAD_PHOTO)
+        png, caption = service.week_image(next_week=kind == "image_next")
+        await message.reply_photo(InputFile(io.BytesIO(png), filename="week.png"), caption=caption)
+    elif kind == "calendar":
+        await chat.send_action(ChatAction.UPLOAD_DOCUMENT)
+        data, caption = service.calendar_file()
+        await message.reply_document(
+            InputFile(io.BytesIO(data), filename="study_schedule.ics"), caption=caption
+        )
+
+
+async def cmd_image(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _allowed(update, context):
+        return
+    nxt = bool(context.args) and context.args[0].lower() in ("next", "الجاي", "القادم")
+    await _send_special(update, _service(context), "image_next" if nxt else "image")
+
+
+async def cmd_calendar(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _allowed(update, context):
+        return
+    await _send_special(update, _service(context), "calendar")
 
 
 async def cmd_mytasks(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -239,6 +277,10 @@ async def reminders_job(context: ContextTypes.DEFAULT_TYPE) -> None:
     for msg in due_messages(service.db, now, service.config):
         if msg.text:
             try:
+                if msg.image:
+                    await context.bot.send_photo(
+                        msg.chat_id, InputFile(io.BytesIO(msg.image), filename="week.png")
+                    )
                 await context.bot.send_message(
                     msg.chat_id, msg.text, parse_mode=ParseMode.HTML, disable_web_page_preview=True
                 )
@@ -289,6 +331,8 @@ def build_application(config: Config) -> Application:
     app.add_handler(CommandHandler("chatid", cmd_chat_id))
     app.add_handler(CommandHandler("reminders", cmd_reminders))
     app.add_handler(CommandHandler("mytasks", cmd_mytasks))
+    app.add_handler(CommandHandler("image", cmd_image))
+    app.add_handler(CommandHandler("calendar", cmd_calendar))
     for name in ("today", "tomorrow", "week", "nextweek", "upcoming", "exams"):
         app.add_handler(CommandHandler(name, _schedule_command(name)))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, on_text))

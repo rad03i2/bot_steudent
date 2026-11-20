@@ -40,8 +40,9 @@ SEND_WINDOW = timedelta(hours=3)
 @dataclass
 class Outgoing:
     chat_id: int
-    kind: str  # morning / evening / weekly
+    kind: str  # morning / evening
     text: str
+    image: bytes | None = None  # صورة جدول الأسبوع (مع الملخص الأسبوعي)
 
 
 def _parse_hhmm(value: str, default: time) -> time:
@@ -125,6 +126,7 @@ def due_messages(db: Database, now: datetime, config: Config) -> list[Outgoing]:
 
     out: list[Outgoing] = []
     texts: dict[str, str | None] = {}
+    weekly_image: bytes | None = None
     for chat_id in db.reminder_chats():
         if _in_window(now, morning_at) and not db.was_sent(chat_id, "morning", today):
             if "morning" not in texts:
@@ -132,10 +134,24 @@ def due_messages(db: Database, now: datetime, config: Config) -> list[Outgoing]:
             out.append(Outgoing(chat_id, "morning", texts["morning"] or ""))
         if _in_window(now, evening_at) and not db.was_sent(chat_id, "evening", today):
             if "evening" not in texts:
-                texts["evening"] = (
-                    weekly_text(db, today, config.week_start, config.month_style)
-                    if is_week_end
-                    else evening_text(db, today, config.month_style)
-                )
-            out.append(Outgoing(chat_id, "evening", texts["evening"] or ""))
+                if is_week_end:
+                    texts["evening"] = weekly_text(db, today, config.week_start, config.month_style)
+                    weekly_image = _weekly_image(db, today, config)
+                else:
+                    texts["evening"] = evening_text(db, today, config.month_style)
+            out.append(Outgoing(chat_id, "evening", texts["evening"] or "", weekly_image))
     return out
+
+
+def _weekly_image(db: Database, today: date, config: Config) -> bytes | None:
+    try:
+        from .image import render_week
+
+        start, _ = week_bounds(today + timedelta(days=1), config.week_start)
+        tasks = db.tasks_between(start, start + timedelta(days=6))
+        return render_week(tasks, start=start, today=today, title="جدول الأسبوع القادم", style=config.month_style)
+    except Exception:  # الصورة إضافة؛ إذا فشلت يكفي النص
+        import logging
+
+        logging.getLogger(__name__).warning("weekly image failed", exc_info=True)
+        return None
