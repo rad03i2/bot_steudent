@@ -194,6 +194,16 @@ async def on_error(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 async def _post_init(app: Application) -> None:
     await app.bot.set_my_commands([BotCommand(c, d) for c, d in COMMANDS])
+    try:
+        await app.bot.set_my_short_description("مُذكِّر الدفعة 📚 ينظم امتحاناتكم وواجباتكم ومشاريعكم تلقائياً")
+        await app.bot.set_my_description(
+            "📚 مُذكِّر الدفعة\n\n"
+            "أضيفوني لقروب الدفعة، وأي موعد دراسي ينذكر (امتحان، كويز، ميد، فاينل، واجب، مشروع...) "
+            "أسجّله وأحسب تاريخه وأرتّبه بجداول حسب الأيام والأسابيع.\n\n"
+            "اسألوني: شنو عدنا الأسبوع الجاي؟"
+        )
+    except Exception:  # الوصف تجميلي فقط، لا نوقف البوت بسببه
+        log.warning("تعذر تحديث وصف البوت", exc_info=True)
 
 
 def build_application(config: Config) -> Application:

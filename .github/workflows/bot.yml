@@ -1,0 +1,38 @@
+name: run-bot
+
+# يشغّل البوت على سيرفرات GitHub مجاناً.
+# كل جولة تعمل قرابة 5 ساعات و40 دقيقة (حد GitHub هو 6 ساعات).
+# التشغيل المجدول كل 30 دقيقة ينتظر في الطابور حتى تنتهي الجولة الحالية،
+# ثم يبدأ مباشرة، فيبقى البوت شغالاً بشكل شبه متواصل.
+on:
+  schedule:
+    - cron: "*/30 * * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: telegram-bot
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  bot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 355
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -r requirements.txt
+      - name: Run bot
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          DATA_KEY: ${{ secrets.DATA_KEY || secrets.TELEGRAM_BOT_TOKEN }}
+          ALLOWED_CHAT_IDS: ${{ vars.ALLOWED_CHAT_IDS }}
+          TIMEZONE: ${{ vars.TIMEZONE || 'Asia/Baghdad' }}
+          WEEK_START: ${{ vars.WEEK_START || 'sunday' }}
+          MONTH_STYLE: ${{ vars.MONTH_STYLE || 'levantine' }}
+        run: ./scripts/actions_run.sh
