@@ -38,4 +38,5 @@ jobs:
           REMINDERS: ${{ vars.REMINDERS || 'true' }}
           MORNING_TIME: ${{ vars.MORNING_TIME || '07:00' }}
           EVENING_TIME: ${{ vars.EVENING_TIME || '20:00' }}
-        run: ./scripts/actions_run.sh
+        # exec: حتى تصل إشارة الإيقاف من GitHub للسكربت نفسه فيحفظ البيانات قبل الخروج
+        run: exec ./scripts/actions_run.sh
