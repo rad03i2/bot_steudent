@@ -39,6 +39,13 @@ CREATE TABLE IF NOT EXISTS confirmations (
     PRIMARY KEY (task_id, user_id)
 );
 
+CREATE TABLE IF NOT EXISTS done (
+    task_id INTEGER NOT NULL REFERENCES tasks(id),
+    user_id INTEGER NOT NULL,
+    done_at TEXT NOT NULL,
+    PRIMARY KEY (task_id, user_id)
+);
+
 CREATE TABLE IF NOT EXISTS chats (
     chat_id INTEGER PRIMARY KEY,
     title TEXT NOT NULL DEFAULT '',
@@ -201,6 +208,34 @@ class Database:
     def is_member(self, user_id: int) -> bool:
         return self.conn.execute("SELECT 1 FROM members WHERE user_id = ?", (user_id,)).fetchone() is not None
 
+    # ---------- الإنجاز ("خلصت") ----------
+
+    def toggle_done(self, task_id: int, user_id: int) -> bool:
+        """يبدّل حالة الإنجاز للطالب. يرجع True إذا صارت المهمة منجزة."""
+        if self.is_done(task_id, user_id):
+            self.conn.execute("DELETE FROM done WHERE task_id = ? AND user_id = ?", (task_id, user_id))
+            self.conn.commit()
+            return False
+        self.mark_done(task_id, user_id)
+        return True
+
+    def mark_done(self, task_id: int, user_id: int) -> bool:
+        """يرجع True إذا كان تسجيلاً جديداً."""
+        cur = self.conn.execute(
+            "INSERT OR IGNORE INTO done VALUES (?, ?, ?)",
+            (task_id, user_id, datetime.now().isoformat(timespec="seconds")),
+        )
+        self.conn.commit()
+        return cur.rowcount > 0
+
+    def is_done(self, task_id: int, user_id: int) -> bool:
+        return self.conn.execute(
+            "SELECT 1 FROM done WHERE task_id = ? AND user_id = ?", (task_id, user_id)
+        ).fetchone() is not None
+
+    def done_ids(self, user_id: int) -> set[int]:
+        return {r["task_id"] for r in self.conn.execute("SELECT task_id FROM done WHERE user_id = ?", (user_id,))}
+
     # ---------- القروبات والتذكيرات ----------
 
     def register_chat(self, chat_id: int, title: str) -> None:
@@ -245,7 +280,8 @@ class Database:
     @staticmethod
     def _select() -> str:
         return (
-            "SELECT t.*, COUNT(c.user_id) AS confirmations FROM tasks t"
+            "SELECT t.*, COUNT(c.user_id) AS confirmations,"
+            " (SELECT COUNT(*) FROM done d WHERE d.task_id = t.id) AS done_count FROM tasks t"
             " LEFT JOIN confirmations c ON c.task_id = t.id"
         )
 
@@ -262,4 +298,5 @@ class Database:
             created_by=row["created_by"],
             created_by_name=row["created_by_name"],
             confirmations=max(1, row["confirmations"]),
+            done_count=row["done_count"],
         )

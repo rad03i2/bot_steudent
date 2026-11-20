@@ -68,11 +68,15 @@ def task_card(task: Task, today: date, *, header: str, style: str = "levantine")
     lines.append(f"⏳ {days_left_phrase(task.due_date, today)}")
     confirm = "✅ مؤكد من " + _students(task.confirmations) if task.confirmations > 1 else ""
     lines.append(f"👤 أضافه: {escape(task.created_by_name or 'طالب')}" + (f"  •  {confirm}" if confirm else ""))
+    if task.done_count:
+        lines.append(f"✔️ أنجزها: {_students(task.done_count)}")
     lines.append(f"<i>#{task.id}</i>")
     return "\n".join(lines)
 
 
 def _students(n: int) -> str:
+    if n == 1:
+        return "طالب واحد"
     if n == 2:
         return "طالبين"
     if 3 <= n <= 10:
@@ -163,3 +167,22 @@ def _count_tasks(n: int) -> str:
     if 3 <= n <= 10:
         return f"{n} مهام"
     return f"{n} مهمة"
+
+
+def personal_list(
+    tasks: list[Task],
+    *,
+    name: str,
+    start: date,
+    end: date,
+    today: date,
+    style: str = "levantine",
+) -> str:
+    """قائمة الطالب الشخصية: المهام التي لم يضغط عليها "خلصت" بعد."""
+    if not tasks:
+        return (
+            f"📋 <b>مهام {escape(name)}</b>\n{SEP}\n\n"
+            "🎉 ما باقي عليك شي! كلشي خالص.\nاستمر هيج 💪"
+        )
+    text = schedule(tasks, title=f"باقي عليك يا {name}", start=start, end=end, today=today, style=style)
+    return text + "\n\n👇 اضغط على المهمة لما تخلصها"

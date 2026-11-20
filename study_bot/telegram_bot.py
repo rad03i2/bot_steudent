@@ -53,6 +53,9 @@ HELP_TEXT = """\
 /upcoming – كل القادم (30 يوم)
 /exams – الامتحانات القادمة
 
+✔️ <b>لما تخلص مهمة:</b> اضغط "✔️ خلصت" على بطاقتها، أو اعمل Reply عليها واكتب <i>خلصت</i>.
+📋 <b>قائمتك الشخصية:</b> اكتب <i>شنو باقي علي؟</i> أو /mytasks
+
 🔔 <b>تذكيرات تلقائية</b> بالقروب: ملخص كل صباح، وتذكير مساءً بمواعيد باجر، وملخص أسبوعي.
 /reminders – حالة التذكيرات (on / off للتشغيل والإيقاف)
 """
@@ -64,6 +67,7 @@ COMMANDS = [
     ("nextweek", "جدول الأسبوع القادم"),
     ("upcoming", "كل المهام القادمة"),
     ("exams", "الامتحانات القادمة"),
+    ("mytasks", "شنو باقي علي؟ (قائمتي الشخصية)"),
     ("reminders", "التذكيرات التلقائية (on/off)"),
     ("help", "طريقة الاستخدام"),
 ]
@@ -196,6 +200,12 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         )
 
 
+async def cmd_mytasks(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not _allowed(update, context):
+        return
+    await _send(update, _service(context).personal_reply(_sender(update)))
+
+
 async def cmd_reminders(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """/reminders on|off: تشغيل أو إيقاف التذكيرات التلقائية لهذه المحادثة."""
     if not _allowed(update, context):
@@ -278,6 +288,7 @@ def build_application(config: Config) -> Application:
     app.add_handler(CommandHandler(["start", "help"], cmd_help))
     app.add_handler(CommandHandler("chatid", cmd_chat_id))
     app.add_handler(CommandHandler("reminders", cmd_reminders))
+    app.add_handler(CommandHandler("mytasks", cmd_mytasks))
     for name in ("today", "tomorrow", "week", "nextweek", "upcoming", "exams"):
         app.add_handler(CommandHandler(name, _schedule_command(name)))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, on_text))

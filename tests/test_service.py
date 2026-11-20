@@ -139,7 +139,7 @@ async def test_query_schedule():
     fake.next = Analysis(
         intent="query", tasks=[], target_task_id=None, changes=None, reply=None,
         query=QuerySpec(start_date="2026-11-22", end_date="2026-11-28", subject=None, kinds=None,
-                        title="جدول الأسبوع القادم"),
+                        title="جدول الأسبوع القادم", only_mine=False),
     )
     replies = await svc.handle_message("شنو عدنا الأسبوع الجاي؟", SARA, chat_id=1, is_private=False)
     text = replies[0].text

@@ -69,6 +69,11 @@ _DELETE_WORDS = {
     "انكنسل", "cancel", "cancelled", "canceled", "احذف", "احذفه", "احذفها", "امسح", "امسحه", "امسحها",
     "شيله", "شيلها", "شيلوه", "ماكو", "مافي",
 }
+_DONE_WORDS = {
+    "خلصت", "خلصته", "خلصتها", "خلصتهن", "سويته", "سويتها", "سويت", "انجزت", "انجزته", "انجزتها",
+    "حليته", "حليتها", "حليت", "سلمت", "سلمته", "سلمتها", "كملته", "كملتها", "done", "finished",
+}
+_PERSONAL_WORDS = {"مهامي", "واجباتي", "امتحاناتي", "جدولي", "مواعيدي", "تكاليفي", "مشاريعي"}
 _STOP_WORDS = {
     "مال", "ماله", "مالت", "مالة", "ماده", "الماده", "بماده", "لماده", "حق", "حقت", "تبع", "تبعت", "في",
     "ب", "على", "عن", "ل", "من", "عدنا", "عندنا", "عدكم", "عندكم", "علينا", "عليكم", "ترى", "تره",
@@ -112,6 +117,8 @@ _PAST_WORDS = _normalized(_PAST_WORDS)
 _UPDATE_WORDS = _normalized(_UPDATE_WORDS)
 _DELETE_WORDS = _normalized(_DELETE_WORDS)
 _STOP_WORDS = _normalized(_STOP_WORDS)
+_DONE_WORDS = _normalized(_DONE_WORDS)
+_PERSONAL_WORDS = _normalized(_PERSONAL_WORDS)
 _CONTENT_MARKERS = _normalized(_CONTENT_MARKERS)
 _COMPOUND_SUBJECT_HEADS = _normalized(_COMPOUND_SUBJECT_HEADS)
 _PM_WORDS = _normalized(_PM_WORDS)
@@ -423,6 +430,25 @@ def analyze_message(req: AnalysisRequest) -> Analysis:
     is_question = "؟" in text or "?" in text or bool(word_set & _QUESTION_WORDS) or bool(word_set & _QUERY_WORDS)
     replied_id = _replied_task_id(req.replied_to)
 
+    # ----- "خلصت" (رداً على بطاقة، أو مع ذكر المهمة) -----
+    talks_about_past = bool(word_set & (_PAST_WORDS - _DONE_WORDS))
+    if word_set & _DONE_WORDS and not is_question and not talks_about_past:
+        if replied_id or kind or _mentions_known_subject(tokens, req.known_subjects):
+            target, reply = _find_target(tokens, req, kind, dates, replied_id, for_delete=True)
+            if target:
+                return _empty("done", target_task_id=target)
+            if req.direct:
+                return _empty("clarify", reply=reply)
+
+    # ----- "شنو باقي علي؟" / "مهامي" -----
+    if _is_personal_query(word_set):
+        query = _build_query(tokens, req, kind, dates)
+        if not dates:
+            query.start_date = req.today.isoformat()
+            query.end_date = (req.today + timedelta(days=30)).isoformat()
+        query.only_mine = True
+        return _empty("query", query=query)
+
     # ----- إلغاء -----
     if word_set & _DELETE_WORDS and (kind or replied_id or _mentions_known_subject(tokens, req.known_subjects)):
         target, reply = _find_target(tokens, req, kind, dates, replied_id, for_delete=True)
@@ -470,6 +496,17 @@ def analyze_message(req: AnalysisRequest) -> Analysis:
         # "باجر؟" أو "الأربعاء" وحدها في الخاص = سؤال عن جدول ذلك اليوم
         return _empty("query", query=_build_query(tokens, req, None, dates))
     return _empty("ignore")
+
+
+def _is_personal_query(words: set[str]) -> bool:
+    if words & _PERSONAL_WORDS:
+        return True
+    if "باقيلي" in words or ("باقي" in words and words & {"علي", "الي", "الى", "لي"}):
+        return True
+    # "شنو ما خلصت؟" / "شنو بعدني ما مخلص"
+    return bool(words & {"ما", "مو"}) and bool(words & {"خلصت", "مخلص", "مخلصه", "خلصته"}) and bool(
+        words & _QUESTION_WORDS
+    )
 
 
 def _extract_tasks(text: str, req: AnalysisRequest) -> list[ExtractedTask]:
@@ -612,5 +649,6 @@ def _build_query(tokens: list[Token], req: AnalysisRequest, kind: str | None, da
     if filters:
         title += " – " + " ".join(filters)
     return QuerySpec(
-        start_date=start.isoformat(), end_date=end.isoformat(), subject=subject, kinds=kinds, title=title
+        start_date=start.isoformat(), end_date=end.isoformat(), subject=subject, kinds=kinds, title=title,
+        only_mine=False,
     )

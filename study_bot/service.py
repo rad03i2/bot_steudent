@@ -13,7 +13,7 @@ from .arabic import normalize
 from .config import Config
 from .dates import resolve_date_expression, week_bounds
 from .db import Database
-from .formatting import long_date, schedule, task_card
+from .formatting import long_date, personal_list, schedule, task_card
 from .llm import Analysis, AnalysisRequest, Analyzer, ExtractedTask
 from .models import EXAM_KINDS, TASK_KINDS, Task, kind_of
 
@@ -201,6 +201,13 @@ class StudyService:
             return [self._update_task(analysis)]
         if intent == "delete":
             return [self._ask_delete(analysis.target_task_id)]
+        if intent == "done":
+            done_reply = self._mark_done(analysis.target_task_id, sender, direct=is_private or addressed)
+            return [done_reply] if done_reply else []
+        if intent == "query" and analysis.query and analysis.query.only_mine:
+            start = _parse_iso(analysis.query.start_date)
+            end = _parse_iso(analysis.query.end_date)
+            return [self.personal_reply(sender, start, end)]
         if intent == "query" and analysis.query:
             return [self._query(analysis)]
         if intent == "clarify" and analysis.reply:
@@ -273,7 +280,43 @@ class StudyService:
 
     @staticmethod
     def _card_buttons(task: Task) -> list[list[Button]]:
-        return [[Button("✅ صحيح، أأكّد", f"c:{task.id}"), Button("🗑 حذف", f"d:{task.id}")]]
+        return [
+            [Button("✅ صحيح، أأكّد", f"c:{task.id}"), Button("✔️ خلصت", f"x:{task.id}")],
+            [Button("🗑 حذف", f"d:{task.id}")],
+        ]
+
+    # ---------- الإنجاز والقائمة الشخصية ----------
+
+    def personal_reply(self, sender: Sender, start: date | None = None, end: date | None = None) -> Reply:
+        """قائمة "شنو باقي علي؟": المهام القادمة التي لم يعلّم عليها الطالب "خلصت"."""
+        today = self.today()
+        start = max(start or today, today)
+        end = end if end and end >= start else today + timedelta(days=30)
+        done = self.db.done_ids(sender.user_id)
+        tasks = [t for t in self.db.tasks_between(start, end) if t.id not in done]
+        text = personal_list(tasks, name=sender.name, start=start, end=end, today=today, style=self.style)
+        buttons = [
+            [Button(f"✔️ {t.info.label} {t.subject}"[:60], f"m:{t.id}:{sender.user_id}")]
+            for t in sorted(tasks, key=lambda t: (t.due_date, t.priority, t.id))[:8]
+        ]
+        return Reply(text, buttons)
+
+    def _mark_done(self, task_id: int | None, sender: Sender, *, direct: bool) -> Reply | None:
+        task = self.db.get_task(task_id) if task_id else None
+        if task is None:
+            return Reply("🤔 ما عرفت أي مهمة خلصت. اعمل رد (Reply) على بطاقتها واكتب: خلصت") if direct else None
+        self.db.mark_done(task.id, sender.user_id)
+        remaining = self._remaining_count(sender)
+        tail = f"باقي عليك {remaining} 📋 (اكتب: شنو باقي علي؟)" if remaining else "ما باقي عليك شي 🎉"
+        return Reply(
+            f"✔️ عاشت إيدك يا {escape(sender.name)}! سجّلت إنك خلصت "
+            f"<b>{escape(task.info.label)} {escape(task.subject)}</b>.\n{tail}"
+        )
+
+    def _remaining_count(self, sender: Sender) -> int:
+        today = self.today()
+        done = self.db.done_ids(sender.user_id)
+        return sum(1 for t in self.db.tasks_between(today, today + timedelta(days=30)) if t.id not in done)
 
     # ---------- تعديل ----------
 
@@ -346,6 +389,8 @@ class StudyService:
     # ------------------------------------------------------------------
 
     def handle_callback(self, data: str, sender: Sender) -> CallbackResult:
+        if data.startswith("m:"):
+            return self._personal_callback(data, sender)
         action, _, raw_id = data.partition(":")
         try:
             task_id = int(raw_id)
@@ -361,6 +406,16 @@ class StudyService:
                 task_card(task, today, header="✅ موعد مؤكد", style=self.style), self._card_buttons(task)
             )
             return CallbackResult("شكراً، تم تسجيل تأكيدك ✅" if is_new else "سبق وأكّدته 👍", edit=card)
+
+        if action == "x":
+            task = self.db.get_task(task_id)
+            if task is None:
+                return CallbackResult("هذا الموعد محذوف")
+            now_done = self.db.toggle_done(task_id, sender.user_id)
+            task = self.db.get_task(task_id)
+            card = Reply(task_card(task, today, header="📌 موعد مسجّل", style=self.style), self._card_buttons(task))
+            answer = "✔️ عاشت إيدك! انحسبت عليك خالصة" if now_done else "↩️ رجّعتها لقائمتك"
+            return CallbackResult(answer, edit=card)
 
         if action == "d":
             return CallbackResult("", new=self._ask_delete(task_id))
@@ -381,3 +436,16 @@ class StudyService:
             return CallbackResult("تم الإلغاء", edit=Reply("👌 تمام، ما حذفت شي."))
 
         return CallbackResult("❌ زر غير معروف")
+
+    def _personal_callback(self, data: str, sender: Sender) -> CallbackResult:
+        try:
+            _, raw_task, raw_owner = data.split(":")
+            task_id, owner = int(raw_task), int(raw_owner)
+        except ValueError:
+            return CallbackResult("❌ زر غير صالح")
+        if sender.user_id != owner:
+            return CallbackResult("هذي قائمة طالب ثاني 🙂 اكتب /mytasks حتى تشوف قائمتك")
+        if self.db.get_task(task_id) is None:
+            return CallbackResult("هذا الموعد محذوف", edit=self.personal_reply(sender))
+        self.db.mark_done(task_id, sender.user_id)
+        return CallbackResult("✔️ عاشت إيدك!", edit=self.personal_reply(sender))

@@ -52,6 +52,7 @@ class Task:
     created_by: int
     created_by_name: str
     confirmations: int = 1
+    done_count: int = 0
 
     @property
     def info(self) -> TaskKind:
