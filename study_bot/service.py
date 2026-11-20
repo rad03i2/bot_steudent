@@ -14,7 +14,7 @@ from .config import Config
 from .dates import resolve_date_expression, week_bounds
 from .db import Database
 from .formatting import long_date, schedule, task_card
-from .llm import Analysis, Analyzer, ExtractedTask, build_user_prompt
+from .llm import Analysis, AnalysisRequest, Analyzer, ExtractedTask
 from .models import EXAM_KINDS, TASK_KINDS, Task, kind_of
 
 log = logging.getLogger(__name__)
@@ -160,23 +160,24 @@ class StudyService:
         if self.analyzer is None:
             if is_private or addressed:
                 return [Reply(
-                    "⚠️ ميزة فهم الرسائل غير مفعّلة (لا يوجد مفتاح ANTHROPIC_API_KEY).\n"
+                    "⚠️ ميزة فهم الرسائل غير مفعّلة.\n"
                     "يمكنك استخدام الأوامر: /today /tomorrow /week /nextweek /upcoming /exams"
                 )]
             return []
 
         today = self.today()
         upcoming = self.db.tasks_between(today - timedelta(days=3), today + timedelta(days=180))[:80]
-        prompt = build_user_prompt(
-            text,
+        request = AnalysisRequest(
+            message=text,
             today=today,
             week_start=self.config.week_start,
             sender_name=sender.name,
             known_subjects=self.db.known_subjects(),
             upcoming=upcoming,
             replied_to=replied_to,
+            direct=is_private or addressed,
         )
-        analysis = await self.analyzer.analyze(prompt)
+        analysis = await self.analyzer.analyze(request)
         if analysis is None:
             if is_private or addressed:
                 return [Reply("😕 صار خطأ مؤقت بالفهم، جرّب مرة ثانية بعد شوي.")]

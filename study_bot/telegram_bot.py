@@ -18,6 +18,7 @@ from telegram.ext import (
 from .config import Config
 from .db import Database
 from .llm import ClaudeAnalyzer
+from .rules import RuleBasedAnalyzer
 from .service import Reply, Sender, StudyService
 
 log = logging.getLogger(__name__)
@@ -197,10 +198,11 @@ async def _post_init(app: Application) -> None:
 
 def build_application(config: Config) -> Application:
     db = Database(config.db_path)
+    # مجاني افتراضياً: المحلّل المحلي. Claude يُستخدم فقط إذا وُضع مفتاحه.
     analyzer = (
         ClaudeAnalyzer(config.anthropic_api_key, config.claude_model, config.claude_effort)
         if config.ai_enabled
-        else None
+        else RuleBasedAnalyzer()
     )
     service = StudyService(db, analyzer, config)
 

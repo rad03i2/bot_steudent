@@ -17,8 +17,10 @@ def main() -> None:
     config = Config.from_env()
     if not config.telegram_token:
         sys.exit("❌ لازم تضبط TELEGRAM_BOT_TOKEN (شوف README.md)")
-    if not config.ai_enabled:
-        logging.warning("ANTHROPIC_API_KEY غير موجود: البوت سيعمل بالأوامر فقط بدون فهم الرسائل")
+    if config.ai_enabled:
+        logging.info("فهم الرسائل: Claude (%s)", config.claude_model)
+    else:
+        logging.info("فهم الرسائل: المحلّل المحلي المجاني (بدون أي API)")
 
     app = build_application(config)
     logging.info("البوت يعمل... (Ctrl+C للإيقاف)")

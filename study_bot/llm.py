@@ -1,12 +1,16 @@
-"""فهم رسائل الطلاب باستخدام Claude وإرجاع بيانات منظمة (Structured Outputs)."""
+"""فهم رسائل الطلاب باستخدام Claude (اختياري ومدفوع) وإرجاع بيانات منظمة.
+
+البوت يعمل مجاناً افتراضياً بالمحلّل المحلي في rules.py؛ هذا الملف يُستخدم فقط
+إذا وُضع مفتاح ANTHROPIC_API_KEY.
+"""
 
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass
 from datetime import date
 from typing import Literal, Optional, Protocol
 
-import anthropic
 from pydantic import BaseModel, Field, ValidationError
 
 from .dates import calendar_reference
@@ -97,42 +101,54 @@ def _tasks_context(tasks: list[Task]) -> str:
     )
 
 
-def build_user_prompt(
-    message: str,
-    *,
-    today: date,
-    week_start: int,
-    sender_name: str,
-    known_subjects: list[str],
-    upcoming: list[Task],
-    replied_to: str | None = None,
-) -> str:
+@dataclass
+class AnalysisRequest:
+    """كل ما يحتاجه المحلّل لفهم رسالة واحدة."""
+
+    message: str
+    today: date
+    week_start: int
+    sender_name: str
+    known_subjects: list[str]
+    upcoming: list[Task]
+    replied_to: str | None = None
+    direct: bool = False  # رسالة خاصة أو موجهة للبوت
+
+
+def build_user_prompt(req: AnalysisRequest) -> str:
     parts = [
         "<calendar>\nالتقويم المرجعي (التاريخ، اليوم، الأسبوع):\n"
-        + calendar_reference(today, week_start=week_start)
+        + calendar_reference(req.today, week_start=req.week_start)
         + "\n</calendar>",
-        "<known_subjects>\n" + ("، ".join(known_subjects) if known_subjects else "(لا يوجد بعد)") + "\n</known_subjects>",
+        "<known_subjects>\n"
+        + ("، ".join(req.known_subjects) if req.known_subjects else "(لا يوجد بعد)")
+        + "\n</known_subjects>",
         "<registered_tasks>\nالمهام المسجلة حالياً (رقم | نوع | مادة | محتوى | تاريخ):\n"
-        + _tasks_context(upcoming)
+        + _tasks_context(req.upcoming)
         + "\n</registered_tasks>",
     ]
-    if replied_to:
-        parts.append(f"<replied_to_message>\n{replied_to}\n</replied_to_message>")
-    parts.append(f"<message sender=\"{sender_name}\">\n{message}\n</message>")
+    if req.replied_to:
+        parts.append(f"<replied_to_message>\n{req.replied_to}\n</replied_to_message>")
+    parts.append(f"<message sender=\"{req.sender_name}\">\n{req.message}\n</message>")
     return "\n\n".join(parts)
 
 
 class Analyzer(Protocol):
-    async def analyze(self, user_prompt: str) -> Analysis | None: ...
+    async def analyze(self, req: AnalysisRequest) -> Analysis | None: ...
 
 
 class ClaudeAnalyzer:
     def __init__(self, api_key: str, model: str, effort: str = "low"):
+        import anthropic  # اختياري: مطلوب فقط عند استخدام Claude
+
         self.client = anthropic.AsyncAnthropic(api_key=api_key)
         self.model = model
         self.effort = effort
 
-    async def analyze(self, user_prompt: str) -> Analysis | None:
+    async def analyze(self, req: AnalysisRequest) -> Analysis | None:
+        import anthropic
+
+        user_prompt = build_user_prompt(req)
         try:
             response = await self.client.beta.messages.parse(
                 model=self.model,

@@ -5,7 +5,9 @@ import json
 import httpx2 as httpx
 import pytest
 
-from study_bot.llm import Analysis, ClaudeAnalyzer
+from datetime import date
+
+from study_bot.llm import Analysis, AnalysisRequest, ClaudeAnalyzer, build_user_prompt
 
 ANALYSIS = {
     "intent": "add",
@@ -26,6 +28,17 @@ def _response(stop_reason="end_turn", text=json.dumps(ANALYSIS, ensure_ascii=Fal
     }
 
 
+def _req(message="رسالة"):
+    return AnalysisRequest(message=message, today=date(2026, 11, 20), week_start=6, sender_name="أحمد",
+                           known_subjects=["فيزياء"], upcoming=[])
+
+
+def test_prompt_contains_calendar_and_message():
+    prompt = build_user_prompt(_req("الخميس امتحان"))
+    assert "<calendar>" in prompt and "2026-11-26 الخميس" in prompt
+    assert "الخميس امتحان" in prompt and "فيزياء" in prompt
+
+
 def _analyzer(handler):
     analyzer = ClaudeAnalyzer("test-key", "claude-opus-5-5", "low")
     analyzer.client = analyzer.client.with_options(
@@ -43,7 +56,7 @@ async def test_request_shape_and_parsing():
         seen["beta"] = request.headers.get("anthropic-beta", "")
         return httpx.Response(200, json=_response())
 
-    result = await _analyzer(handler).analyze("رسالة")
+    result = await _analyzer(handler).analyze(_req())
     assert isinstance(result, Analysis)
     assert result.tasks[0].subject == "فيزياء"
     body = seen["body"]
@@ -62,5 +75,5 @@ async def test_refusal_and_errors_return_none():
     def server_error(request):
         return httpx.Response(500, json={"type": "error", "error": {"type": "api_error", "message": "x"}})
 
-    assert await _analyzer(refusal).analyze("x") is None
-    assert await _analyzer(server_error).analyze("x") is None
+    assert await _analyzer(refusal).analyze(_req()) is None
+    assert await _analyzer(server_error).analyze(_req()) is None

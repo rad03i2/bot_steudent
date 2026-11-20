@@ -15,10 +15,10 @@ SARA = Sender(2, "سارة")
 class FakeAnalyzer:
     def __init__(self):
         self.next: Analysis | None = None
-        self.prompts: list[str] = []
+        self.requests: list = []
 
-    async def analyze(self, user_prompt: str) -> Analysis | None:
-        self.prompts.append(user_prompt)
+    async def analyze(self, req) -> Analysis | None:
+        self.requests.append(req)
         return self.next
 
 
@@ -49,7 +49,7 @@ async def test_add_task_uses_code_date_over_llm():
     assert "باقي 6 أيام" in replies[0].text
     tasks = db.tasks_between(TODAY, date(2026, 12, 31))
     assert [(t.subject, t.due_date) for t in tasks] == [("فيزياء", date(2026, 11, 26))]
-    assert "<calendar>" in fake.prompts[0]
+    assert fake.requests[0].today == TODAY
 
 
 @pytest.mark.asyncio
@@ -167,7 +167,7 @@ async def test_group_prefilter_skips_chitchat():
     fake = FakeAnalyzer()
     svc, _ = make_service(fake)
     replies = await svc.handle_message("هههههه صدك", AHMED, chat_id=1, is_private=False)
-    assert replies == [] and fake.prompts == []
+    assert replies == [] and fake.requests == []
 
 
 @pytest.mark.asyncio

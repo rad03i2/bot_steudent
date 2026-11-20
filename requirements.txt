@@ -1,4 +1,4 @@
-anthropic>=2.11.0
+# الوضع المجاني (افتراضي)
 python-telegram-bot>=22.0
 pydantic>=2.7
 python-dotenv>=1.0

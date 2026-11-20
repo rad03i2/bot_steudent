@@ -42,7 +42,9 @@ for _idx, _forms in enumerate(
         WEEKDAY_ALIASES["ال" + _f] = _idx
 # صيغ تتعارض مع الأرقام بدون "ال" ("ثلاثه أيام")، فنقبلها فقط مع "ال"
 WEEKDAY_ALIASES.update({"الثلاثه": 1, "التلاته": 1, "الاربعه": 2})
-WEEKDAY_ALIASES.pop("الحد", None)
+# كلمات تحمل معنى آخر بدون "ال": "احد" (شخص)، "اثنين" (رقم)
+for _ambiguous in ("الحد", "حد", "احد", "اثنين", "اتنين", "ثنين", "اثنينه"):
+    WEEKDAY_ALIASES.pop(_ambiguous, None)
 
 
 MONTHS_STANDARD = [
