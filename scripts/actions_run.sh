@@ -14,8 +14,12 @@ DB_PATH="${DB_PATH:-data/study_bot.db}"
 ENC_NAME="study_bot.db.enc"
 WORK="$(mktemp -d)"
 
-: "${TELEGRAM_BOT_TOKEN:?ضع السر TELEGRAM_BOT_TOKEN في إعدادات المستودع}"
-: "${DATA_KEY:?DATA_KEY مفقود}"
+if [ -z "${TELEGRAM_BOT_TOKEN:-}" ]; then
+  echo "::notice::السر TELEGRAM_BOT_TOKEN غير موجود بعد. أضفه من Settings > Secrets and variables > Actions."
+  exit 0
+fi
+DATA_KEY="${DATA_KEY:-$TELEGRAM_BOT_TOKEN}"
+export DATA_KEY
 export DB_PATH
 
 mkdir -p "$(dirname "$DB_PATH")"
