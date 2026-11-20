@@ -77,6 +77,10 @@ class Database:
         self.conn = sqlite3.connect(path, check_same_thread=False)
         self.conn.row_factory = sqlite3.Row
         self.conn.executescript(_SCHEMA)
+        # القروبات التي سُجّلت فيها مهام قبل إضافة جدول chats (أرقام القروبات سالبة)
+        self.conn.execute(
+            "INSERT OR IGNORE INTO chats (chat_id) SELECT DISTINCT chat_id FROM tasks WHERE chat_id < 0"
+        )
         self.conn.commit()
 
     # ---------- المهام ----------

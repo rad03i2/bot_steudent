@@ -135,3 +135,16 @@ async def test_reminders_job_sends_and_handles_kicked_bot(monkeypatch):
 
     await telegram_bot.reminders_job(_FakeContext(service, bot))
     assert len(bot.sent) == 1  # لا تكرار
+
+
+def test_groups_backfilled_from_existing_tasks(tmp_path):
+    path = str(tmp_path / "old.db")
+    db = Database(path)
+    db.add_task(kind="quiz", subject="إحصاء", title="", due_date=FRI, due_time=None, notes=None,
+                chat_id=-555, user_id=1, user_name="أحمد")
+    db.add_task(kind="quiz", subject="إحصاء", title="", due_date=FRI, due_time=None, notes=None,
+                chat_id=777, user_id=1, user_name="أحمد")  # محادثة خاصة: لا تُشترك تلقائياً
+    db.conn.execute("DELETE FROM chats")
+    db.conn.commit()
+    reopened = Database(path)
+    assert reopened.reminder_chats() == [-555]
