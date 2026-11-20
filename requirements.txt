@@ -1,5 +1,5 @@
 # الوضع المجاني (افتراضي)
-python-telegram-bot>=22.0
+python-telegram-bot[job-queue]>=22.0
 pydantic>=2.7
 python-dotenv>=1.0
 tzdata>=2024.1

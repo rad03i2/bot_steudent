@@ -80,7 +80,7 @@ def _students(n: int) -> str:
     return f"{n} طالب"
 
 
-def _task_line(task: Task) -> str:
+def task_line(task: Task) -> str:
     info = task.info
     main = f"{info.icon} <b>{escape(info.label)} {escape(task.subject)}</b>"
     if task.title:
@@ -103,7 +103,7 @@ def _is_heavy(day_tasks: list[Task]) -> bool:
     return important >= 2 or len(day_tasks) >= 3
 
 
-def _sort_key(t: Task):
+def sort_key(t: Task):
     return (t.priority, t.due_time or "99:99", t.id)
 
 
@@ -128,7 +128,7 @@ def schedule(
         by_day[t.due_date].append(t)
 
     for d in sorted(by_day):
-        day_tasks = sorted(by_day[d], key=_sort_key)
+        day_tasks = sorted(by_day[d], key=sort_key)
         heavy = _is_heavy(day_tasks)
         top = min(t.priority for t in day_tasks)
         marker = "🔴" if heavy else PRIORITY_DOTS.get(top, "🔹") if top <= 1 else "🔹"
@@ -140,7 +140,7 @@ def schedule(
             header += "  ← يوم ثقيل! 💪"
         lines.append("")
         lines.append(header)
-        lines.extend(_task_line(t) for t in day_tasks)
+        lines.extend(task_line(t) for t in day_tasks)
 
     lines.append("")
     lines.append(SEP)

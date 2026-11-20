@@ -39,6 +39,19 @@ CREATE TABLE IF NOT EXISTS confirmations (
     PRIMARY KEY (task_id, user_id)
 );
 
+CREATE TABLE IF NOT EXISTS chats (
+    chat_id INTEGER PRIMARY KEY,
+    title TEXT NOT NULL DEFAULT '',
+    reminders INTEGER NOT NULL DEFAULT 1
+);
+
+CREATE TABLE IF NOT EXISTS sent_reminders (
+    chat_id INTEGER NOT NULL,
+    kind TEXT NOT NULL,
+    day TEXT NOT NULL,
+    PRIMARY KEY (chat_id, kind, day)
+);
+
 CREATE TABLE IF NOT EXISTS members (
     user_id INTEGER PRIMARY KEY,
     name TEXT NOT NULL DEFAULT '',
@@ -183,6 +196,45 @@ class Database:
 
     def is_member(self, user_id: int) -> bool:
         return self.conn.execute("SELECT 1 FROM members WHERE user_id = ?", (user_id,)).fetchone() is not None
+
+    # ---------- القروبات والتذكيرات ----------
+
+    def register_chat(self, chat_id: int, title: str) -> None:
+        self.conn.execute(
+            "INSERT INTO chats (chat_id, title) VALUES (?, ?)"
+            " ON CONFLICT(chat_id) DO UPDATE SET title = excluded.title",
+            (chat_id, title or ""),
+        )
+        self.conn.commit()
+
+    def set_reminders(self, chat_id: int, enabled: bool) -> None:
+        self.conn.execute(
+            "INSERT INTO chats (chat_id, reminders) VALUES (?, ?)"
+            " ON CONFLICT(chat_id) DO UPDATE SET reminders = excluded.reminders",
+            (chat_id, int(enabled)),
+        )
+        self.conn.commit()
+
+    def reminders_enabled(self, chat_id: int) -> bool:
+        row = self.conn.execute("SELECT reminders FROM chats WHERE chat_id = ?", (chat_id,)).fetchone()
+        return bool(row["reminders"]) if row else True
+
+    def reminder_chats(self) -> list[int]:
+        return [r["chat_id"] for r in self.conn.execute("SELECT chat_id FROM chats WHERE reminders = 1")]
+
+    def was_sent(self, chat_id: int, kind: str, day: date) -> bool:
+        return self.conn.execute(
+            "SELECT 1 FROM sent_reminders WHERE chat_id = ? AND kind = ? AND day = ?",
+            (chat_id, kind, day.isoformat()),
+        ).fetchone() is not None
+
+    def mark_sent(self, chat_id: int, kind: str, day: date) -> None:
+        self.conn.execute(
+            "INSERT OR IGNORE INTO sent_reminders VALUES (?, ?, ?)", (chat_id, kind, day.isoformat())
+        )
+        # لا نحتاج سجلات أقدم من شهر
+        self.conn.execute("DELETE FROM sent_reminders WHERE day < date(?, '-30 days')", (day.isoformat(),))
+        self.conn.commit()
 
     # ---------- داخلي ----------
 

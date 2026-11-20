@@ -70,9 +70,20 @@ LAST_HASH="$( [ -f "$DB_PATH" ] && sha256sum "$DB_PATH" | cut -d' ' -f1 || true)
 timeout --signal=INT --kill-after=60 "$RUN_SECONDS" python -m study_bot &
 BOT_PID=$!
 
+# عند إلغاء التشغيل من GitHub: نوقف البوت بهدوء ونحفظ البيانات قبل الخروج
+shutdown() {
+  echo "⏹ طلب إيقاف، حفظ البيانات..."
+  kill -INT "$BOT_PID" 2>/dev/null || true
+  wait "$BOT_PID" 2>/dev/null || true
+  save || true
+  exit 0
+}
+trap shutdown INT TERM
+
 elapsed=0
 while kill -0 "$BOT_PID" 2>/dev/null; do
-  sleep 15
+  sleep 15 &
+  wait $! || true
   elapsed=$((elapsed + 15))
   if [ "$elapsed" -ge "$SAVE_EVERY" ]; then
     save || true

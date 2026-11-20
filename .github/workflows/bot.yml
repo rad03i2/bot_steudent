@@ -35,4 +35,7 @@ jobs:
           TIMEZONE: ${{ vars.TIMEZONE || 'Asia/Baghdad' }}
           WEEK_START: ${{ vars.WEEK_START || 'sunday' }}
           MONTH_STYLE: ${{ vars.MONTH_STYLE || 'levantine' }}
+          REMINDERS: ${{ vars.REMINDERS || 'true' }}
+          MORNING_TIME: ${{ vars.MORNING_TIME || '07:00' }}
+          EVENING_TIME: ${{ vars.EVENING_TIME || '20:00' }}
         run: ./scripts/actions_run.sh

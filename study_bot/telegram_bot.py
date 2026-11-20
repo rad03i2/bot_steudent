@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import logging
+from datetime import datetime
 
 from telegram import BotCommand, InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.constants import ChatAction, ChatType, ParseMode
+from telegram.error import Forbidden, TelegramError
 from telegram.ext import (
     Application,
     CallbackQueryHandler,
@@ -18,6 +20,7 @@ from telegram.ext import (
 from .config import Config
 from .db import Database
 from .llm import ClaudeAnalyzer
+from .reminders import due_messages
 from .rules import RuleBasedAnalyzer
 from .service import Reply, Sender, StudyService
 
@@ -49,6 +52,9 @@ HELP_TEXT = """\
 /nextweek – الأسبوع القادم
 /upcoming – كل القادم (30 يوم)
 /exams – الامتحانات القادمة
+
+🔔 <b>تذكيرات تلقائية</b> بالقروب: ملخص كل صباح، وتذكير مساءً بمواعيد باجر، وملخص أسبوعي.
+/reminders – حالة التذكيرات (on / off للتشغيل والإيقاف)
 """
 
 COMMANDS = [
@@ -58,6 +64,7 @@ COMMANDS = [
     ("nextweek", "جدول الأسبوع القادم"),
     ("upcoming", "كل المهام القادمة"),
     ("exams", "الامتحانات القادمة"),
+    ("reminders", "التذكيرات التلقائية (on/off)"),
     ("help", "طريقة الاستخدام"),
 ]
 
@@ -95,6 +102,7 @@ def _allowed(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
     if allowed and chat.id not in allowed:
         return False
     service.db.touch_member(user.id, user.full_name or "")
+    service.db.register_chat(chat.id, chat.title or "")
     return True
 
 
@@ -188,6 +196,54 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         )
 
 
+async def cmd_reminders(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """/reminders on|off: تشغيل أو إيقاف التذكيرات التلقائية لهذه المحادثة."""
+    if not _allowed(update, context):
+        return
+    chat = update.effective_chat
+    assert chat is not None
+    service = _service(context)
+    cfg = service.config
+    arg = (context.args[0].lower() if context.args else "")
+    if arg in ("on", "تشغيل", "شغل"):
+        service.db.set_reminders(chat.id, True)
+    elif arg in ("off", "ايقاف", "إيقاف", "طفي"):
+        service.db.set_reminders(chat.id, False)
+    enabled = service.db.reminders_enabled(chat.id) and chat.id in service.db.reminder_chats()
+    if enabled:
+        text = (
+            "🔔 <b>التذكيرات مفعّلة</b>\n"
+            f"☀️ الساعة {cfg.morning_time}: ملخص اليوم والمواعيد القريبة\n"
+            f"🌙 الساعة {cfg.evening_time}: تذكير بمواعيد باجر\n"
+            "📅 آخر يوم بالأسبوع: ملخص الأسبوع الجاي\n\n"
+            "للإيقاف: <code>/reminders off</code>"
+        )
+    else:
+        text = "🔕 <b>التذكيرات متوقفة</b>\nللتشغيل: <code>/reminders on</code>"
+    await _send(update, Reply(text))
+
+
+async def reminders_job(context: ContextTypes.DEFAULT_TYPE) -> None:
+    service: StudyService = context.application.bot_data["service"]
+    now = datetime.now(service.config.tz)
+    for msg in due_messages(service.db, now, service.config):
+        if msg.text:
+            try:
+                await context.bot.send_message(
+                    msg.chat_id, msg.text, parse_mode=ParseMode.HTML, disable_web_page_preview=True
+                )
+            except Forbidden:
+                # البوت انحذف من القروب
+                log.info("Chat %s removed the bot; disabling reminders", msg.chat_id)
+                service.db.set_reminders(msg.chat_id, False)
+                continue
+            except TelegramError:
+                log.warning("Failed to send %s reminder to %s", msg.kind, msg.chat_id, exc_info=True)
+                continue
+        # حتى الأيام الفارغة تُسجّل، حتى لا نعيد الفحص كل 5 دقائق
+        service.db.mark_sent(msg.chat_id, msg.kind, now.date())
+
+
 async def on_error(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
     log.exception("Unhandled error", exc_info=context.error)
 
@@ -221,9 +277,12 @@ def build_application(config: Config) -> Application:
 
     app.add_handler(CommandHandler(["start", "help"], cmd_help))
     app.add_handler(CommandHandler("chatid", cmd_chat_id))
+    app.add_handler(CommandHandler("reminders", cmd_reminders))
     for name in ("today", "tomorrow", "week", "nextweek", "upcoming", "exams"):
         app.add_handler(CommandHandler(name, _schedule_command(name)))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, on_text))
     app.add_handler(CallbackQueryHandler(on_callback))
     app.add_error_handler(on_error)
+    if config.reminders and app.job_queue is not None:
+        app.job_queue.run_repeating(reminders_job, interval=300, first=20, name="reminders")
     return app
