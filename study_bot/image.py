@@ -349,9 +349,7 @@ def render_timetable(today: date | None = None, day: int | None = None) -> bytes
             text_r = inner_r - tw - 18
             name = fit_text(name, text_r - inner_l, 27, True)
             draw_text(draw, name, right=text_r, y=ty + 10, size=27, fill=COLORS["text"], bold=True)
-            details = " + ".join(lec.teachers) if lec.teachers else ""
-            if lec.note:
-                details = f"{details}  •  {lec.note}" if details else lec.note
+            details = " + ".join(lec.teachers) if lec.teachers else ""  # بدون الملاحظات
             if details:
                 details = fit_text(details, text_r - inner_l, 21)
                 draw_text(draw, details, right=text_r, y=ty + 52, size=21, fill=COLORS["muted"])

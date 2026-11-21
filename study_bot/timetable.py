@@ -253,9 +253,8 @@ def lecture_lines_html(day: date) -> list[str]:
     for lec in lectures_on(day):
         name = lec.subject + (f" ({lec.part})" if lec.part else "")
         line = f"🕘 <b>{time_range_text(lec)}</b>  {escape(name)}"
+        # الملاحظات (القاعة المدرجة، مقررات...) لا تُعرض: الأساتذة فقط
         extra = " + ".join(lec.teachers)
-        if lec.note:
-            extra = f"{extra} • {lec.note}" if extra else lec.note
         if extra:
             line += f"\n      <i>{escape(extra)}</i>"
         lines.append(line)

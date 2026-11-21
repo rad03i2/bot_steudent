@@ -51,7 +51,7 @@ class QuerySpec(BaseModel):
     end_date: str = Field(description="YYYY-MM-DD")
     subject: Optional[str]
     kinds: Optional[list[TaskKindKey]]
-    title: str = Field(description="عنوان قصير للجدول مثل: جدول الأسبوع القادم")
+    title: str = Field(description="عنوان قصير لقائمة المهام مثل: مهام الأسبوع القادم")
     only_mine: bool = Field(description="true إذا يسأل الطالب عن مهامه هو التي لم ينجزها بعد")
 
 

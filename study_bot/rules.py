@@ -650,10 +650,10 @@ def _build_query(tokens: list[Token], req: AnalysisRequest, kind: str | None, da
     if weekday_dates:
         start = end = weekday_dates[0].value
         rel = {0: "اليوم", 1: "الغد"}.get((start - today).days)
-        title = f"جدول {rel}" if rel else f"جدول يوم {WEEKDAY_NAMES_AR[start.weekday()]}"
+        title = f"مهام {rel}" if rel else f"مهام يوم {WEEKDAY_NAMES_AR[start.weekday()]}"
     elif any(p in text for p in _NEXT_WEEK):
         start, end = this_start + timedelta(days=7), this_start + timedelta(days=13)
-        title = "جدول الأسبوع القادم"
+        title = "مهام الأسبوع القادم"
     elif any(p in text for p in _THIS_WEEK):
         start, end = today, this_end
         title = "بقية هذا الأسبوع"
@@ -669,7 +669,7 @@ def _build_query(tokens: list[Token], req: AnalysisRequest, kind: str | None, da
     else:
         long_range = bool({"متى", "امتى"} & {t.norm for t in tokens}) or kind in ("final", "midterm")
         start, end = today, today + timedelta(days=180 if long_range else 14)
-        title = "المواعيد القادمة"
+        title = "المهام القادمة"
 
     subject = _subject_in(tokens, req)[0]
     kinds: list[str] | None = None

@@ -149,7 +149,7 @@ def weekly_text(db: Database, today: date, week_start: int, style: str = "levant
 
     tasks = db.tasks_between(start, end)
     text = "📅 <b>ملخص الأسبوع</b>\n\n" + schedule(
-        tasks, title="جدول الأسبوع القادم", start=start, end=end, today=today, style=style
+        tasks, title="مهام الأسبوع القادم", start=start, end=end, today=today, style=style
     )
     lectures = lecture_lines_html(today + timedelta(days=1))
     if lectures:
@@ -206,7 +206,7 @@ def _weekly_image(db: Database, today: date, config: Config) -> bytes | None:
 
         start, _ = week_bounds(today + timedelta(days=1), config.week_start)
         tasks = db.tasks_between(start, start + timedelta(days=6))
-        return render_week(tasks, start=start, today=today, title="جدول الأسبوع القادم", style=config.month_style)
+        return render_week(tasks, start=start, today=today, title="مهام الأسبوع القادم", style=config.month_style)
     except Exception:  # الصورة إضافة؛ إذا فشلت يكفي النص
         import logging
 

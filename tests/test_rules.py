@@ -126,7 +126,7 @@ async def test_full_flow_free_mode():
 
     # سؤال
     r = await say(svc, "شنو عدنا الأسبوع الجاي؟", SARA)
-    assert "جدول الأسبوع القادم" in r[0].text and "النفايات" in r[0].text and "انشائية" not in r[0].text
+    assert "مهام الأسبوع القادم" in r[0].text and "النفايات" in r[0].text and "انشائية" not in r[0].text
 
     # إلغاء (يطلب تأكيد بالأزرار)
     r = await say(svc, "انلغى واجب الانشائية")

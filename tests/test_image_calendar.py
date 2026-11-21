@@ -52,8 +52,11 @@ def test_service_week_image_and_special_requests():
     svc = StudyService(make_db(), None, Config(), today_fn=lambda: TODAY)
     png, caption = svc.week_image(next_week=True)
     assert png.startswith(b"\x89PNG") and "الأسبوع القادم" in caption
-    assert svc.special_request("صورة جدول الأسبوع الجاي") == "image_next"
-    assert svc.special_request("ابعث صورة الجدول") == "image"
+    # "جدول" بدون ذكر المهام = جدول الدروس. صورة مهام الأسبوع تحتاج ذكر "المهام"
+    assert svc.special_request("صورة جدول المهام للأسبوع الجاي") == "image_next"
+    assert svc.special_request("ابعث صورة جدول المهام") == "image"
+    assert svc.special_request("صورة جدول الأسبوع الجاي") == "timetable"
+    assert svc.special_request("ابعث صورة الجدول") == "timetable"
     assert svc.special_request("تقويم") == "calendar"
     assert svc.special_request("التقويم الجامعي تغير هالسنة كلش") is None
     assert svc.special_request("الخميس امتحان فيزياء") is None

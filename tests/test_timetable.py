@@ -119,8 +119,15 @@ def test_special_requests_for_lectures():
     assert svc.special_request("محاضرة تعويضية الخميس") is None
     assert svc.special_request("جدول الواجبات الخميس") is None
     assert svc.special_request("مهام الاثنين") is None
-    assert svc.special_request("جدول اليوم") is None  # جدول المهام النصي (مع المحاضرات)
-    assert svc.special_request("جدول الاسبوع الجاي") is None
+    assert svc.special_request("جدول اليوم") == "lectures:2026-11-21"  # اليوم سبت: عطلة
+    # الأسبوع = صورة الجدول كاملة (بدون مهام)، وليس كتابة
+    assert svc.special_request("جدول الأسبوع") == "timetable"
+    assert svc.special_request("جدول الاسبوع الجاي") == "timetable"
+    assert svc.special_request("شنو عندنا محاضرات باكر") == "timetable_day:2026-11-22"
+    assert svc.special_request("جدول باكر") == "timetable_day:2026-11-22"
+    # كلام عن محاضرة وليس طلب جدول
+    assert svc.special_request("المحاضرة تأجلت للخميس") is None
+    assert svc.special_request("المحاضرات الجاية كلها مراجعة ومحد يفهم شي والدكتور يشرح بسرعة كلش") is None
 
 
 def test_day_timetable_image_is_cropped_to_one_day():
@@ -144,10 +151,37 @@ def test_lectures_reply_and_holiday():
     assert "ماكو محاضرات" in r.text and "الأحد" in r.text
 
 
-def test_single_day_schedule_includes_lectures():
-    svc, _ = make_service(today=date(2026, 11, 23))  # الاثنين
-    text = svc.schedule_reply("today").text
-    assert "محاضرات اليوم نفسه" in text and "تقييم الأثر البيئي" in text
+async def test_tomorrow_question_gives_tasks_plus_lectures_without_notes():
+    svc, db = make_service()  # اليوم السبت، باجر الأحد
+    await say(svc, "الأحد امتحان عند د. عمار الفصل 3")
+    r = await say(svc, "شنو عدنا باكر", private=True)
+    text = r[0].text
+    assert "مهام الغد" in text and "الأحد 22/11" in text and "امتحان تصاميم محطات" in text
+    assert "محاضرات باجر" in text and "8:00 – 10:00" in text and "د. سمير سعدي شماس" in text
+    # الملاحظات (القاعة المدرجة، مقررات) لا تظهر
+    assert "القاعة المدرجة" not in text and "مقررات" not in text
+
+
+async def test_tasks_requests_send_tasks_only():
+    svc, db = make_service()
+    await say(svc, "الأحد امتحان عند د. عمار")
+    for q in ("مهام باكر", "المهام", "شنو المهام باكر", "واجبات باكر"):
+        assert svc.special_request(q) is None, q
+    r = await say(svc, "مهام باكر", private=True)
+    assert "امتحان تصاميم محطات" in r[0].text and "محاضرات" not in r[0].text
+    assert "محاضرات" not in svc.schedule_reply("tomorrow").text  # /tomorrow = مهام فقط
+    r = await say(svc, "المهام", private=True)
+    assert "المهام القادمة" in r[0].text and "محاضرات" not in r[0].text
+
+
+def test_lecture_notes_are_not_shown_anywhere():
+    from study_bot.timetable import lecture_lines_html
+
+    for d in (date(2026, 11, 22), date(2026, 11, 23), date(2026, 11, 25)):
+        text = "\n".join(lecture_lines_html(d))
+        assert "القاعة المدرجة" not in text and "مقررات" not in text
+    # المحاضرات والأساتذة تبقى
+    assert "راكان فاروق" in "\n".join(lecture_lines_html(date(2026, 11, 23)))
 
 
 def test_timetable_image():

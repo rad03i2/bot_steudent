@@ -10,7 +10,7 @@ from datetime import date, datetime, timedelta
 from html import escape
 from typing import Callable
 
-from .arabic import normalize
+from .arabic import WEEKDAY_NAMES_AR, normalize
 from .config import Config
 from .dates import resolve_date_expression, week_bounds
 from .db import Database
@@ -69,6 +69,11 @@ _KEYWORDS = [
     "بكره", "بكرا", "باجر", "غدا", "الاسبوع", "اسبوع",
     "الاحد", "الاثنين", "الثلاثاء", "الثلاثا", "الاربعاء", "الاربعا", "الخميس", "الجمعه", "السبت",
 ]
+# كلمات تدل على أن الطلب عن المهام (وليس عن جدول الدروس)
+TASK_WORDS = {
+    "مهام", "المهام", "مهمه", "واجب", "واجبات", "الواجبات", "امتحان", "امتحانات", "الامتحانات", "مواعيد",
+    "المواعيد", "تسليم", "تسليمات", "كويز", "كويزات", "ميد", "فاينل", "مشروع", "تقرير",
+}
 _DATE_RE = re.compile(r"\b\d{1,2}\s*[/\-.]\s*\d{1,2}\b")
 
 
@@ -130,17 +135,17 @@ class StudyService:
         kinds = None
         if period == "today":
             start = end = today
-            title = "جدول اليوم"
+            title = "مهام اليوم"
         elif period == "tomorrow":
             start = end = today + timedelta(days=1)
-            title = "جدول الغد"
+            title = "مهام الغد"
         elif period == "week":
             start, end = today, week_bounds(today, self.config.week_start)[1]
-            title = "بقية هذا الأسبوع"
+            title = "مهام بقية هذا الأسبوع"
         elif period == "nextweek":
             this_start, _ = week_bounds(today, self.config.week_start)
             start, end = this_start + timedelta(days=7), this_start + timedelta(days=13)
-            title = "جدول الأسبوع القادم"
+            title = "مهام الأسبوع القادم"
         elif period == "exams":
             start, end = today, today + timedelta(days=180)
             kinds = sorted(EXAM_KINDS)
@@ -149,8 +154,7 @@ class StudyService:
             start, end = today, today + timedelta(days=30)
             title = "كل المهام القادمة (30 يوماً)"
         tasks = self.db.tasks_between(start, end, kinds=kinds)
-        text = schedule(tasks, title=title, start=start, end=end, today=today, style=self.style)
-        return Reply(self._with_lectures(text, start, end))
+        return Reply(schedule(tasks, title=title, start=start, end=end, today=today, style=self.style))
 
     # ------------------------------------------------------------------
     # الصورة والتقويم
@@ -164,7 +168,7 @@ class StudyService:
         if next_week:
             start += timedelta(days=7)
         tasks = self.db.tasks_between(start, start + timedelta(days=6))
-        title = "جدول الأسبوع القادم" if next_week else "جدول هذا الأسبوع"
+        title = "مهام الأسبوع القادم" if next_week else "مهام هذا الأسبوع"
         png = render_week(tasks, start=start, today=today, title=title, style=self.style)
         caption = f"🗓 {title}" + ("" if next_week else "\nللأسبوع الجاي: /image next")
         return png, caption
@@ -182,51 +186,54 @@ class StudyService:
         return build_ics(tasks, self.config.tz), caption
 
     def special_request(self, text: str) -> str | None:
-        """طلبات لا تحتاج تحليلاً: صور الجداول، محاضرات يوم معيّن، ملف التقويم."""
+        """طلبات لا تحتاج تحليلاً.
+
+        - "جدول ..." أو "محاضرات ...": جدول الدروس فقط (بدون مهام):
+          الأسبوع أو بدون يوم = الصورة الكاملة، ويوم واحد = بطاقة ذلك اليوم مقصوصة.
+        - طلبات المهام ("المهام"، "مهام الاثنين"...) لا تُعالج هنا: تذهب للتحليل وترجع مهام فقط.
+        - "صورة جدول المهام": صورة مهام الأسبوع. "تقويم": ملف التقويم.
+        """
         from .arabic import WEEKDAY_ALIASES
-        from .rules import _date_word, find_dates, find_kind, tokenize
+        from .rules import _DELETE_WORDS, _PAST_WORDS, _UPDATE_WORDS, _date_word, find_dates, find_kind, tokenize
 
         t = normalize(text)
         words = set(t.split())
         lecture_words = {"محاضرات", "المحاضرات", "محاضره", "المحاضره", "دروس", "الدروس", "حصص", "الحصص",
                          "دوام", "الدوام", "lectures", "timetable"}
         table_words = {"جدول", "الجدول", "للجدول"}
-        task_words = {"مهام", "المهام", "واجب", "واجبات", "الواجبات", "امتحان", "امتحانات", "الامتحانات",
-                      "مواعيد", "المواعيد", "تسليم", "كويز", "ميد", "فاينل", "مشروع", "تقرير"}
-
-        if words & {"صوره", "بالصوره"} and words & {"جدول", "الجدول", "الاسبوع", "اسبوع", "للجدول"} and not words & lecture_words:
-            nxt = bool(words & {"الجاي", "القادم", "الياي", "المقبل"})
-            return "image_next" if nxt else "image"
-        if words & {"تقويم", "التقويم", "كاليندر", "calendar", "ics"} and len(words) <= 3:
-            return "calendar"
-        if words & {"تعويضيه", "تعويضي", "الجايه", "القادمه"} and words & lecture_words:
-            return None
-
+        week_words = {"الاسبوع", "اسبوع", "الاسبوعي", "اسبوعي", "الاسبوعيه", "الاسبوعين"}
+        has_task_words = bool(words & TASK_WORDS)
         asks_lectures = bool(words & lecture_words)
         asks_table = bool(words & table_words)
-        if not (asks_lectures or asks_table):
+
+        if words & {"تقويم", "التقويم", "كاليندر", "calendar", "ics"} and len(words) <= 3:
+            return "calendar"
+        if words & {"صوره", "بالصوره"} and asks_table and has_task_words:
+            nxt = bool(words & {"الجاي", "القادم", "الياي", "المقبل"})
+            return "image_next" if nxt else "image"
+        if not (asks_lectures or asks_table) or has_task_words:
             return None
+        if words & {"تعويضيه", "تعويضي", "الجايه", "القادمه"} and asks_lectures:
+            return None
+        if words & (_UPDATE_WORDS | _DELETE_WORDS | _PAST_WORDS) or len(words) > 7:
+            return None  # كلام عن محاضرة (تأجلت، انلغت...) أو جملة طويلة، وليس طلب جدول
         tokens = tokenize(text)
         kind, _ = find_kind(tokens)
-        if kind not in (None, "lecture") or words & task_words:
-            return None  # "الواجب بالمحاضرة"، "جدول الواجبات": هذا موعد/مهام وليس جدول دروس
+        if kind not in (None, "lecture"):
+            return None
 
         dates = find_dates(tokens, self.today(), self.config.week_start)
         names_a_weekday = any(_date_word(tk.norm) in WEEKDAY_ALIASES for tk in tokens)
         question = bool(words & {"شنو", "شكو", "وش", "ايش", "شو", "متى", "شني", "اشكو", "عدنا", "عندنا"}) or "؟" in text or "?" in text
 
         day: date | None = None
-        if dates and (asks_lectures or names_a_weekday):
+        if dates and (names_a_weekday or not words & week_words):
             day = dates[0].value
-        elif asks_lectures and question and not words & {"دروس", "الدروس", "timetable"}:
+        elif asks_lectures and question and not words & (week_words | {"دروس", "الدروس", "timetable"}):
             day = self.today()  # "شنو عدنا محاضرات؟" بدون يوم = اليوم
         if day is not None:
             return f"timetable_day:{day.isoformat()}" if lectures_on(day) else f"lectures:{day.isoformat()}"
-        if asks_lectures and asks_table:
-            return "timetable"
-        if asks_lectures and words & {"دروس", "الدروس", "timetable"}:
-            return "timetable"
-        return None
+        return "timetable"  # "جدول الأسبوع"، "جدول الدروس": الصورة الكاملة
 
     def lectures_reply(self, day: date) -> Reply:
         lines = self._lecture_lines(day)
@@ -245,13 +252,15 @@ class StudyService:
         return lecture_lines_html(day)
 
     def _with_lectures(self, text: str, start: date, end: date) -> str:
-        """جدول يوم واحد: نضيف محاضرات ذلك اليوم تحت المهام."""
+        """سؤال عن يوم واحد ("شنو عدنا باجر؟"): نضيف محاضرات ذلك اليوم تحت المهام."""
         if start != end:
             return text
         lines = self._lecture_lines(start)
         if not lines:
             return text
-        return text + "\n\n📚 <b>محاضرات اليوم نفسه:</b>\n" + "\n".join(lines)
+        rel = {0: "اليوم", 1: "باجر"}.get((start - self.today()).days)
+        label = f"محاضرات {rel or WEEKDAY_NAMES_AR[start.weekday()]}"
+        return text + f"\n\n📚 <b>{label}:</b>\n" + "\n".join(lines)
 
     def timetable_image(self) -> tuple[bytes, str]:
         from .image import render_timetable
@@ -339,7 +348,7 @@ class StudyService:
             end = _parse_iso(analysis.query.end_date)
             return [self.personal_reply(sender, start, end)]
         if intent == "query" and analysis.query:
-            return [self._query(analysis)]
+            return [self._query(analysis, text)]
         if intent == "clarify" and analysis.reply:
             return [Reply("🤔 " + escape(analysis.reply))]
         if is_private or addressed:
@@ -576,7 +585,7 @@ class StudyService:
 
     # ---------- استعلام ----------
 
-    def _query(self, analysis: Analysis) -> Reply:
+    def _query(self, analysis: Analysis, text: str = "") -> Reply:
         q = analysis.query
         assert q is not None
         today = self.today()
@@ -592,8 +601,10 @@ class StudyService:
             # ربما كُتب اسم المادة بشكل مختلف: نعرض بدون فلتر المادة
             tasks = [t for t in self.db.tasks_between(start, end, kinds=kinds)
                      if normalize(q.subject) in normalize(t.subject) or normalize(t.subject) in normalize(q.subject)]
-        text = schedule(tasks, title=q.title or "الجدول", start=start, end=end, today=today, style=self.style)
-        return Reply(self._with_lectures(text, start, end))
+        reply = schedule(tasks, title=q.title or "المواعيد", start=start, end=end, today=today, style=self.style)
+        # "المهام" / "مهام الاثنين" = مهام فقط. "شنو عدنا باجر؟" = مهام + محاضرات ذلك اليوم
+        tasks_only = bool(kinds) or bool(set(normalize(text).split()) & TASK_WORDS)
+        return Reply(reply if tasks_only else self._with_lectures(reply, start, end))
 
     # ------------------------------------------------------------------
     # الأزرار
