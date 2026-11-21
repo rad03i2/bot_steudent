@@ -33,6 +33,9 @@ HEADS_UP_DAYS = {
     "other": 1,
 }
 
+# أيام العطلة (datetime.weekday: الجمعة 4، السبت 5): التذكير الفارغ لا يُرسل فيها
+HOLIDAY_WEEKDAYS = frozenset({4, 5})
+
 # بعد الوقت المحدد بكم نتوقف عن محاولة الإرسال (حتى لا يصل تذكير متأخراً جداً بعد انقطاع)
 SEND_WINDOW = timedelta(minutes=90)
 
@@ -71,13 +74,16 @@ def _add_tasks(lines: list[str], tasks: list[Task], empty: str) -> None:
         lines.append(f"   {empty} 🎉")
 
 
-def morning_text(db: Database, today: date, style: str = "levantine") -> str:
-    """ملخص الصباح: محاضرات اليوم + مواعيد اليوم + ما يقترب. يُرسل دائماً حتى لو ماكو شي."""
+def morning_text(db: Database, today: date, style: str = "levantine") -> str | None:
+    """ملخص الصباح: محاضرات اليوم + مواعيد اليوم + ما يقترب.
+    بالأيام العادية يُرسل دائماً حتى لو ماكو شي. بالجمعة والسبت يرجع None إذا ماكو شي."""
     from .timetable import lecture_lines_html
 
     today_tasks = sorted(db.tasks_between(today, today), key=sort_key)
     soon = sorted(_heads_up(db, today), key=lambda t: (t.due_date, t.priority, t.id))
     lectures = lecture_lines_html(today)
+    if today.weekday() in HOLIDAY_WEEKDAYS and not (today_tasks or soon or lectures):
+        return None
 
     lines = [f"☀️ <b>صباح الخير!</b>", f"   {long_date(today, style)}", SEP]
     lines.append("📚 <b>محاضرات اليوم:</b>")
@@ -110,23 +116,27 @@ def _slot_title(hour: int) -> str:
     return "🌙 تذكير الليل"
 
 
-def reminder_text(db: Database, today: date, hour: int, style: str = "levantine", *, final: bool = False) -> str:
+def reminder_text(db: Database, today: date, hour: int, style: str = "levantine", *, final: bool = False) -> str | None:
     """تذكير نهاري/مسائي: مهام اليوم وباجر. وفي آخر تذكير بالليل: مهام ومحاضرات باجر.
-    يُرسل دائماً: إذا ماكو مهام يكتب "ماكو مهام"."""
+    بالأيام العادية يُرسل دائماً ويكتب "ماكو مهام" إذا فاضي. بالجمعة والسبت يرجع None إذا ماكو شي."""
     from .timetable import lecture_lines_html
 
     tomorrow = today + timedelta(days=1)
+    # آخر تذكير بالليل: اليوم انتهى، فنذكّر بباجر فقط
+    today_tasks = [] if final else sorted(db.tasks_between(today, today), key=sort_key)
+    tomorrow_tasks = sorted(db.tasks_between(tomorrow, tomorrow), key=sort_key)
+    lectures = lecture_lines_html(tomorrow) if final else []
+    if today.weekday() in HOLIDAY_WEEKDAYS and not (today_tasks or tomorrow_tasks or lectures):
+        return None
+
     lines = [f"<b>{_slot_title(hour)}</b>", SEP]
-    if not final:  # آخر تذكير بالليل: اليوم انتهى، فنذكّر بباجر فقط
-        today_tasks = sorted(db.tasks_between(today, today), key=sort_key)
+    if not final:
         lines.append(f"📌 <b>مهام اليوم ({long_date(today, style)}):</b>")
         _add_tasks(lines, today_tasks, "ماكو مهام اليوم")
         lines.append("")
-    tomorrow_tasks = sorted(db.tasks_between(tomorrow, tomorrow), key=sort_key)
     lines.append(f"📅 <b>مهام باجر ({long_date(tomorrow, style)}):</b>")
     _add_tasks(lines, tomorrow_tasks, "ماكو مهام باجر")
     if final:
-        lectures = lecture_lines_html(tomorrow)
         lines.append("")
         lines.append(f"📚 <b>محاضرات باجر ({long_date(tomorrow, style)}):</b>")
         lines.extend(lectures or ["   ماكو محاضرات باجر 🎉"])

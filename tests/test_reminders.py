@@ -36,9 +36,33 @@ def test_morning_lists_today_and_heads_up():
     assert "امتحان فاينل أحياء" in text
 
 
-def test_morning_is_sent_even_when_nothing_to_do():
-    text = morning_text(make_db(), FRI)  # الجمعة: عطلة وماكو مهام
-    assert "صباح الخير" in text and "ماكو محاضرات اليوم" in text and "ماكو مهام اليوم" in text
+MON = date(2026, 11, 23)  # يوم عمل
+THU = date(2026, 11, 26)
+SAT = date(2026, 11, 21)  # عطلة
+
+
+def test_workday_reminders_are_sent_even_when_empty():
+    text = morning_text(make_db(), THU)  # الخميس: محاضرات وماكو مهام
+    assert "صباح الخير" in text and "تلوث التربة" in text and "ماكو مهام اليوم" in text
+    day = reminder_text(make_db(), MON, 15)
+    assert "ماكو مهام اليوم" in day and "ماكو مهام باجر" in day
+    night = reminder_text(make_db(), MON, 21, final=True)
+    assert "ماكو مهام باجر" in night and "محاضرات باجر" in night
+
+
+def test_holiday_reminders_skip_when_empty_but_send_with_tasks():
+    # الجمعة والسبت: ماكو شي = لا يُرسل
+    for d in (FRI, SAT):
+        assert morning_text(make_db(), d) is None
+        assert reminder_text(make_db(), d, 15) is None
+        assert reminder_text(make_db(), d, 18) is None
+    assert reminder_text(make_db(), FRI, 21, final=True) is None
+    # لكن إذا فيه مهمة اليوم أو باجر يُرسل
+    db = make_db()
+    add(db, "quiz", "إحصاء", SAT)
+    assert "إحصاء" in reminder_text(db, FRI, 18)  # باجر السبت
+    assert "إحصاء" in reminder_text(db, SAT, 15)
+    assert "إحصاء" in morning_text(db, SAT)
 
 
 def test_reminder_mentions_today_and_tomorrow_only():
@@ -49,8 +73,8 @@ def test_reminder_mentions_today_and_tomorrow_only():
     text = reminder_text(db, FRI, 15)
     assert "تذكير العصر" in text and "فيزياء" in text and "إحصاء" in text and "برمجة" not in text
     assert "تذكير المغرب" in reminder_text(db, FRI, 18)
-    # ماكو مهام: التذكير يُرسل ويقول ذلك
-    empty = reminder_text(make_db(), FRI, 15)
+    # يوم عمل وماكو مهام: التذكير يُرسل ويقول ذلك
+    empty = reminder_text(make_db(), MON, 15)
     assert "ماكو مهام اليوم" in empty and "ماكو مهام باجر" in empty
 
 
@@ -92,9 +116,10 @@ def test_four_daily_slots_and_dedup():
     # بعد انتهاء نافذة الإرسال (90 دقيقة) لا نرسل تذكيراً متأخراً
     assert due_messages(make_db(), at(FRI, 11, 0), cfg) == []
     assert due_messages(make_db(), at(FRI, 16, 45), cfg) == []
-    # تذكير فارغ من المهام يُرسل ولا يُتجاهل
-    empty_db = make_db()
-    assert all(m.text for m in due_messages(empty_db, at(FRI, 6, 2), cfg))
+    # يوم عمل فاضي من المهام: التذكيرات تُرسل (نص غير فارغ)
+    assert all(m.text for m in due_messages(make_db(), at(MON, 6, 2), cfg))
+    # الجمعة فاضية: ملخص الصباح يُتجاهل (نص فارغ = لا يُرسل)
+    assert [m.text for m in due_messages(make_db(), at(FRI, 6, 2), cfg)] == [""]
 
 
 def test_last_slot_on_week_end_sends_weekly_with_image():
