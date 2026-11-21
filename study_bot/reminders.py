@@ -64,26 +64,27 @@ def _heads_up(db: Database, today: date) -> list[Task]:
     return [t for t in upcoming if (t.due_date - today).days <= HEADS_UP_DAYS.get(t.kind, 1)]
 
 
-def morning_text(db: Database, today: date, style: str = "levantine") -> str | None:
-    """ملخص الصباح: محاضرات اليوم + مواعيد اليوم + ما يقترب. يرجع None إذا لا يوجد شيء."""
+def _add_tasks(lines: list[str], tasks: list[Task], empty: str) -> None:
+    if tasks:
+        lines.extend(task_line(t) for t in tasks)
+    else:
+        lines.append(f"   {empty} 🎉")
+
+
+def morning_text(db: Database, today: date, style: str = "levantine") -> str:
+    """ملخص الصباح: محاضرات اليوم + مواعيد اليوم + ما يقترب. يُرسل دائماً حتى لو ماكو شي."""
     from .timetable import lecture_lines_html
 
     today_tasks = sorted(db.tasks_between(today, today), key=sort_key)
     soon = sorted(_heads_up(db, today), key=lambda t: (t.due_date, t.priority, t.id))
     lectures = lecture_lines_html(today)
-    if not today_tasks and not soon and not lectures:
-        return None
 
     lines = [f"☀️ <b>صباح الخير!</b>", f"   {long_date(today, style)}", SEP]
-    if lectures:
-        lines.append("📚 <b>محاضرات اليوم:</b>")
-        lines.extend(lectures)
-        lines.append("")
-    lines.append("📝 <b>مواعيد اليوم:</b>")
-    if today_tasks:
-        lines.extend(task_line(t) for t in today_tasks)
-    else:
-        lines.append("   ماكو امتحانات أو تسليمات اليوم 🎉")
+    lines.append("📚 <b>محاضرات اليوم:</b>")
+    lines.extend(lectures or ["   ماكو محاضرات اليوم 🎉"])
+    lines.append("")
+    lines.append("📝 <b>مهام اليوم:</b>")
+    _add_tasks(lines, today_tasks, "ماكو مهام اليوم")
 
     if soon:
         lines.append("")
@@ -109,33 +110,26 @@ def _slot_title(hour: int) -> str:
     return "🌙 تذكير الليل"
 
 
-def reminder_text(db: Database, today: date, hour: int, style: str = "levantine", *, final: bool = False) -> str | None:
-    """تذكير نهاري/مسائي: مواعيد اليوم وباجر. وفي آخر تذكير بالليل تُضاف محاضرات باجر.
-    يرجع None إذا ماكو شي يستحق التذكير."""
+def reminder_text(db: Database, today: date, hour: int, style: str = "levantine", *, final: bool = False) -> str:
+    """تذكير نهاري/مسائي: مهام اليوم وباجر. وفي آخر تذكير بالليل: مهام ومحاضرات باجر.
+    يُرسل دائماً: إذا ماكو مهام يكتب "ماكو مهام"."""
     from .timetable import lecture_lines_html
 
     tomorrow = today + timedelta(days=1)
-    # آخر تذكير بالليل: اليوم انتهى، فنذكّر بباجر فقط
-    today_tasks = [] if final else sorted(db.tasks_between(today, today), key=sort_key)
-    tomorrow_tasks = sorted(db.tasks_between(tomorrow, tomorrow), key=sort_key)
-    lectures = lecture_lines_html(tomorrow) if final else []
-    if not today_tasks and not tomorrow_tasks and not lectures:
-        return None
-
     lines = [f"<b>{_slot_title(hour)}</b>", SEP]
-    if today_tasks:
-        lines.append(f"📌 <b>اليوم ({long_date(today, style)}):</b>")
-        lines.extend(task_line(t) for t in today_tasks)
-    if tomorrow_tasks:
-        if today_tasks:
-            lines.append("")
-        lines.append(f"📅 <b>باجر ({long_date(tomorrow, style)}):</b>")
-        lines.extend(task_line(t) for t in tomorrow_tasks)
-    if lectures:
-        if today_tasks or tomorrow_tasks:
-            lines.append("")
+    if not final:  # آخر تذكير بالليل: اليوم انتهى، فنذكّر بباجر فقط
+        today_tasks = sorted(db.tasks_between(today, today), key=sort_key)
+        lines.append(f"📌 <b>مهام اليوم ({long_date(today, style)}):</b>")
+        _add_tasks(lines, today_tasks, "ماكو مهام اليوم")
+        lines.append("")
+    tomorrow_tasks = sorted(db.tasks_between(tomorrow, tomorrow), key=sort_key)
+    lines.append(f"📅 <b>مهام باجر ({long_date(tomorrow, style)}):</b>")
+    _add_tasks(lines, tomorrow_tasks, "ماكو مهام باجر")
+    if final:
+        lectures = lecture_lines_html(tomorrow)
+        lines.append("")
         lines.append(f"📚 <b>محاضرات باجر ({long_date(tomorrow, style)}):</b>")
-        lines.extend(lectures)
+        lines.extend(lectures or ["   ماكو محاضرات باجر 🎉"])
     lines.append(SEP)
     lines.append("حضّروا زين وناموا بدري 😴" if final else "لا تنسون! 💪")
     return "\n".join(lines)

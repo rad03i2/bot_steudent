@@ -36,8 +36,9 @@ def test_morning_lists_today_and_heads_up():
     assert "امتحان فاينل أحياء" in text
 
 
-def test_morning_empty_day_returns_none():
-    assert morning_text(make_db(), FRI) is None
+def test_morning_is_sent_even_when_nothing_to_do():
+    text = morning_text(make_db(), FRI)  # الجمعة: عطلة وماكو مهام
+    assert "صباح الخير" in text and "ماكو محاضرات اليوم" in text and "ماكو مهام اليوم" in text
 
 
 def test_reminder_mentions_today_and_tomorrow_only():
@@ -48,7 +49,9 @@ def test_reminder_mentions_today_and_tomorrow_only():
     text = reminder_text(db, FRI, 15)
     assert "تذكير العصر" in text and "فيزياء" in text and "إحصاء" in text and "برمجة" not in text
     assert "تذكير المغرب" in reminder_text(db, FRI, 18)
-    assert reminder_text(make_db(), FRI, 15) is None
+    # ماكو مهام: التذكير يُرسل ويقول ذلك
+    empty = reminder_text(make_db(), FRI, 15)
+    assert "ماكو مهام اليوم" in empty and "ماكو مهام باجر" in empty
 
 
 def test_final_reminder_is_tomorrow_only_with_lectures():
@@ -89,6 +92,9 @@ def test_four_daily_slots_and_dedup():
     # بعد انتهاء نافذة الإرسال (90 دقيقة) لا نرسل تذكيراً متأخراً
     assert due_messages(make_db(), at(FRI, 11, 0), cfg) == []
     assert due_messages(make_db(), at(FRI, 16, 45), cfg) == []
+    # تذكير فارغ من المهام يُرسل ولا يُتجاهل
+    empty_db = make_db()
+    assert all(m.text for m in due_messages(empty_db, at(FRI, 6, 2), cfg))
 
 
 def test_last_slot_on_week_end_sends_weekly_with_image():
@@ -97,9 +103,9 @@ def test_last_slot_on_week_end_sends_weekly_with_image():
     msgs = due_messages(db, datetime(sat.year, sat.month, sat.day, 21, 5), Config())
     assert len(msgs) == 1 and "ملخص الأسبوع" in msgs[0].text
     assert msgs[0].image and msgs[0].image.startswith(b"\x89PNG")
-    # يوم عادي وماكو شي باجر: رسالة فارغة (تُسجّل ولا تُرسل)
+    # يوم عادي وماكو مهام: التذكير يُرسل مع "ماكو مهام"
     msgs = due_messages(db, at(FRI - timedelta(days=1), 15, 5), Config())
-    assert len(msgs) == 1 and msgs[0].text == ""
+    assert len(msgs) == 1 and "ماكو مهام" in msgs[0].text
 
 
 def test_disabled_chat_and_config():
