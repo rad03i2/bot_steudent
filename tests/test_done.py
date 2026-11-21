@@ -26,18 +26,14 @@ def _buttons(reply):
     return [b.data for row in reply.buttons for b in row]
 
 
-async def test_done_button_is_per_student():
+async def test_done_button_removed_from_cards_and_old_buttons_are_harmless():
     svc, db = make_service()
     r = await say(svc, "باجر واجب انشائية تمارين 5")
     task_id = db.tasks_between(TODAY, date(2027, 1, 1))[0].id
-    assert f"x:{task_id}" in _buttons(r[0])
-
-    res = svc.handle_callback(f"x:{task_id}", AHMED)
-    assert "عاشت إيدك" in res.answer and "أنجزها: طالب واحد" in res.edit.text
-    assert db.is_done(task_id, AHMED.user_id) and not db.is_done(task_id, SARA.user_id)
-
-    res = svc.handle_callback(f"x:{task_id}", AHMED)  # ضغطة ثانية ترجعها
-    assert "رجّعتها" in res.answer and not db.is_done(task_id, AHMED.user_id)
+    buttons = _buttons(r[0])
+    assert buttons == [f"c:{task_id}", f"d:{task_id}"]  # تأكيد وحذف فقط، بدون "خلصت"
+    res = svc.handle_callback(f"x:{task_id}", AHMED)  # زر قديم من نسخة سابقة
+    assert "انلغى" in res.answer and not db.is_done(task_id, AHMED.user_id)
 
 
 async def test_personal_list_hides_done_tasks():
@@ -55,7 +51,7 @@ async def test_personal_list_hides_done_tasks():
     # سارة لم تنجز شيئاً: قائمتها فيها الاثنين
     r = await say(svc, "شنو باقي علي؟", SARA)
     assert "انشائية" in r[0].text and "النفايات" in r[0].text
-    assert all(d.endswith(f":{SARA.user_id}") for d in _buttons(r[0]))
+    assert _buttons(r[0]) == []
     assert hw.id
 
 
@@ -68,14 +64,11 @@ async def test_done_by_replying_to_card():
     assert "عاشت إيدك" in r[0].text and db.is_done(task_id, SARA.user_id)
 
 
-async def test_personal_list_buttons_only_for_owner():
+async def test_personal_list_has_no_buttons():
     svc, db = make_service()
     await say(svc, "باجر واجب انشائية")
     r = svc.personal_reply(AHMED)
-    data = _buttons(r)[0]
-    assert "طالب ثاني" in svc.handle_callback(data, SARA).answer
-    res = svc.handle_callback(data, AHMED)
-    assert "ما باقي عليك شي" in res.edit.text and res.edit.buttons == []
+    assert r.buttons == [] and "اضغط" not in r.text and "انشائية" in r.text
 
 
 async def test_all_done_message_and_past_chatter_not_marked():

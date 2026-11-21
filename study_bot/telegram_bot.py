@@ -56,12 +56,12 @@ HELP_TEXT = """\
 /nextweek – الأسبوع القادم
 /upcoming – كل القادم (30 يوم)
 /exams – الامتحانات القادمة
-/timetable – صورة جدول الدروس (أو اكتب: <i>شنو عدنا محاضرات باجر؟</i>)
+/timetable – صورة جدول الدروس كاملة
+/timetable الاثنين – محاضرات يوم واحد فقط (أو اكتب: <i>محاضرات باجر</i>، <i>جدول الثلاثاء</i>)
 /image – صورة جدول المهام للأسبوع (و <code>/image next</code> للأسبوع الجاي)
 /calendar – ملف تضيف منه كل المواعيد لتقويم جوالك
 
-✔️ <b>لما تخلص مهمة:</b> اضغط "✔️ خلصت" على بطاقتها، أو اعمل Reply عليها واكتب <i>خلصت</i>.
-📋 <b>قائمتك الشخصية:</b> اكتب <i>شنو باقي علي؟</i> أو /mytasks
+📋 <b>شنو باقي علي:</b> اكتب <i>شنو باقي علي؟</i> أو /mytasks
 
 🔔 <b>تذكيرات تلقائية</b> بالقروب: ملخص كل صباح، وتذكير مساءً بمواعيد باجر، وملخص أسبوعي.
 /reminders – حالة التذكيرات (on / off للتشغيل والإيقاف)
@@ -236,6 +236,11 @@ async def _send_special(update: Update, service: StudyService, kind: str) -> Non
         await chat.send_action(ChatAction.UPLOAD_PHOTO)
         png, caption = service.timetable_image()
         await message.reply_photo(InputFile(io.BytesIO(png), filename="timetable.png"), caption=caption)
+    elif kind.startswith("timetable_day:"):
+        await chat.send_action(ChatAction.UPLOAD_PHOTO)
+        day = date.fromisoformat(kind.split(":", 1)[1])
+        png, caption = service.timetable_day_image(day)
+        await message.reply_photo(InputFile(io.BytesIO(png), filename="day.png"), caption=caption)
     elif kind.startswith("lectures:"):
         day = date.fromisoformat(kind.split(":", 1)[1])
         await _send(update, service.lectures_reply(day))
@@ -255,9 +260,14 @@ async def cmd_image(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 
 async def cmd_timetable(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """/timetable: الجدول كاملاً. /timetable الاثنين: محاضرات ذلك اليوم فقط."""
     if not await _allowed(update, context):
         return
-    await _send_special(update, _service(context), "timetable")
+    service = _service(context)
+    kind = "timetable"
+    if context.args:
+        kind = service.special_request("جدول الدروس " + " ".join(context.args)) or "timetable"
+    await _send_special(update, service, kind)
 
 
 async def cmd_calendar(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -289,9 +299,10 @@ async def cmd_reminders(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     if enabled:
         text = (
             "🔔 <b>التذكيرات مفعّلة</b>\n"
-            f"☀️ الساعة {cfg.morning_time}: ملخص اليوم والمواعيد القريبة\n"
-            f"🌙 الساعة {cfg.evening_time}: تذكير بمواعيد باجر\n"
-            "📅 آخر يوم بالأسبوع: ملخص الأسبوع الجاي\n\n"
+            f"⏰ الأوقات: {' • '.join(cfg.reminder_times)}\n"
+            "☀️ أول تذكير: محاضرات اليوم ومواعيده وما يقترب\n"
+            "🕒🌆 بالنهار والمغرب: مواعيد اليوم وباجر\n"
+            "🌙 آخر تذكير: مواعيد ومحاضرات باجر (ومساء السبت ملخص الأسبوع بالصورة)\n\n"
             "للإيقاف: <code>/reminders off</code>"
         )
     else:

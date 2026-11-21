@@ -108,7 +108,7 @@ async def test_full_flow_free_mode():
     svc, db = make_service()
 
     r = await say(svc, "الخميس الجاي امتحان النفايات الخطرة الفصل 3 و 4")
-    assert "تمت إضافة امتحان" in r[0].text and "26 تشرين الثاني" in r[0].text
+    assert "تمت إضافة امتحان" in r[0].text and "الخميس 26/11" in r[0].text and "2026" not in r[0].text
     assert "اساسيات النفايات الخطرة" in r[0].text
 
     # طالبة ثانية تذكر نفس الموعد باسم الأستاذ -> توثيق بدون تكرار

@@ -85,8 +85,8 @@ def test_weekly_reminder_has_image():
     db = make_db()
     db.register_chat(-1, "الدفعة")
     sat = date(2026, 11, 21)
-    msgs = due_messages(db, datetime(sat.year, sat.month, sat.day, 20, 5), Config())
+    msgs = due_messages(db, datetime(sat.year, sat.month, sat.day, 21, 5), Config())
     assert len(msgs) == 1 and msgs[0].image and msgs[0].image.startswith(b"\x89PNG")
     # يوم عادي: بدون صورة
-    msgs = due_messages(db, datetime(2026, 11, 21 - 1, 20, 5), Config())
+    msgs = due_messages(db, datetime(2026, 11, 20, 18, 5), Config())
     assert msgs[0].image is None

@@ -182,30 +182,50 @@ class StudyService:
         return build_ics(tasks, self.config.tz), caption
 
     def special_request(self, text: str) -> str | None:
-        """طلبات لا تحتاج تحليلاً: صورة جدول المهام، جدول الدروس، محاضرات يوم معيّن، ملف التقويم."""
+        """طلبات لا تحتاج تحليلاً: صور الجداول، محاضرات يوم معيّن، ملف التقويم."""
+        from .arabic import WEEKDAY_ALIASES
+        from .rules import _date_word, find_dates, find_kind, tokenize
+
         t = normalize(text)
         words = set(t.split())
         lecture_words = {"محاضرات", "المحاضرات", "محاضره", "المحاضره", "دروس", "الدروس", "حصص", "الحصص",
                          "دوام", "الدوام", "lectures", "timetable"}
-        if words & {"جدول", "الجدول", "للجدول"} and words & lecture_words:
-            return "timetable"
-        if words & {"صوره", "بالصوره"} and words & {"جدول", "الجدول", "الاسبوع", "اسبوع", "للجدول"}:
+        table_words = {"جدول", "الجدول", "للجدول"}
+        task_words = {"مهام", "المهام", "واجب", "واجبات", "الواجبات", "امتحان", "امتحانات", "الامتحانات",
+                      "مواعيد", "المواعيد", "تسليم", "كويز", "ميد", "فاينل", "مشروع", "تقرير"}
+
+        if words & {"صوره", "بالصوره"} and words & {"جدول", "الجدول", "الاسبوع", "اسبوع", "للجدول"} and not words & lecture_words:
             nxt = bool(words & {"الجاي", "القادم", "الياي", "المقبل"})
             return "image_next" if nxt else "image"
         if words & {"تقويم", "التقويم", "كاليندر", "calendar", "ics"} and len(words) <= 3:
             return "calendar"
-        if words & lecture_words and not words & {"تعويضيه", "تعويضي", "الجايه", "القادمه"}:
-            from .rules import find_dates, find_kind, tokenize
+        if words & {"تعويضيه", "تعويضي", "الجايه", "القادمه"} and words & lecture_words:
+            return None
 
-            tokens = tokenize(text)
-            kind, _ = find_kind(tokens)
-            if kind not in (None, "lecture"):
-                return None  # "الواجب بالمحاضرة" وما شابه: هذا موعد وليس سؤالاً عن المحاضرات
-            dates = find_dates(tokens, self.today(), self.config.week_start)
-            asks = bool(words & {"شنو", "شكو", "وش", "ايش", "شو", "متى", "شني", "اشكو", "عدنا", "عندنا"}) or "؟" in text or "?" in text
-            if dates or asks:
-                day = dates[0].value if dates else self.today()
-                return f"lectures:{day.isoformat()}"
+        asks_lectures = bool(words & lecture_words)
+        asks_table = bool(words & table_words)
+        if not (asks_lectures or asks_table):
+            return None
+        tokens = tokenize(text)
+        kind, _ = find_kind(tokens)
+        if kind not in (None, "lecture") or words & task_words:
+            return None  # "الواجب بالمحاضرة"، "جدول الواجبات": هذا موعد/مهام وليس جدول دروس
+
+        dates = find_dates(tokens, self.today(), self.config.week_start)
+        names_a_weekday = any(_date_word(tk.norm) in WEEKDAY_ALIASES for tk in tokens)
+        question = bool(words & {"شنو", "شكو", "وش", "ايش", "شو", "متى", "شني", "اشكو", "عدنا", "عندنا"}) or "؟" in text or "?" in text
+
+        day: date | None = None
+        if dates and (asks_lectures or names_a_weekday):
+            day = dates[0].value
+        elif asks_lectures and question and not words & {"دروس", "الدروس", "timetable"}:
+            day = self.today()  # "شنو عدنا محاضرات؟" بدون يوم = اليوم
+        if day is not None:
+            return f"timetable_day:{day.isoformat()}" if lectures_on(day) else f"lectures:{day.isoformat()}"
+        if asks_lectures and asks_table:
+            return "timetable"
+        if asks_lectures and words & {"دروس", "الدروس", "timetable"}:
+            return "timetable"
         return None
 
     def lectures_reply(self, day: date) -> Reply:
@@ -237,6 +257,14 @@ class StudyService:
         from .image import render_timetable
 
         return render_timetable(self.today()), "📚 جدول الدروس – المرحلة الرابعة بولونيا شعبة A"
+
+    def timetable_day_image(self, day: date) -> tuple[bytes, str]:
+        """صورة محاضرات يوم واحد فقط، مقصوصة من الجدول الكامل."""
+        from .image import render_timetable
+
+        png = render_timetable(self.today(), day=day.weekday())
+        rel = {0: "اليوم", 1: "باجر"}.get((day - self.today()).days)
+        return png, f"📚 محاضرات {long_date(day)}" + (f" ({rel})" if rel else "")
 
     # ------------------------------------------------------------------
     # الرسائل النصية
@@ -468,26 +496,19 @@ class StudyService:
 
     @staticmethod
     def _card_buttons(task: Task) -> list[list[Button]]:
-        return [
-            [Button("✅ صحيح، أأكّد", f"c:{task.id}"), Button("✔️ خلصت", f"x:{task.id}")],
-            [Button("🗑 حذف", f"d:{task.id}")],
-        ]
+        return [[Button("✅ صحيح، أأكّد", f"c:{task.id}"), Button("🗑 حذف", f"d:{task.id}")]]
 
     # ---------- الإنجاز والقائمة الشخصية ----------
 
     def personal_reply(self, sender: Sender, start: date | None = None, end: date | None = None) -> Reply:
-        """قائمة "شنو باقي علي؟": المهام القادمة التي لم يعلّم عليها الطالب "خلصت"."""
+        """قائمة "شنو باقي علي؟": المهام القادمة، للعرض فقط (بدون أزرار)."""
         today = self.today()
         start = max(start or today, today)
         end = end if end and end >= start else today + timedelta(days=30)
         done = self.db.done_ids(sender.user_id)
         tasks = [t for t in self.db.tasks_between(start, end) if t.id not in done]
         text = personal_list(tasks, name=sender.name, start=start, end=end, today=today, style=self.style)
-        buttons = [
-            [Button(f"✔️ {t.info.label} {t.subject}"[:60], f"m:{t.id}:{sender.user_id}")]
-            for t in sorted(tasks, key=lambda t: (t.due_date, t.priority, t.id))[:8]
-        ]
-        return Reply(text, buttons)
+        return Reply(text)
 
     def _mark_done(self, task_id: int | None, sender: Sender, *, direct: bool) -> Reply | None:
         task = self.db.get_task(task_id) if task_id else None
@@ -579,8 +600,9 @@ class StudyService:
     # ------------------------------------------------------------------
 
     def handle_callback(self, data: str, sender: Sender) -> CallbackResult:
-        if data.startswith("m:"):
-            return self._personal_callback(data, sender)
+        if data.startswith(("m:", "x:")):
+            # أزرار قديمة من نسخ سابقة (ميزة "خلصت" بالأزرار أُلغيت)
+            return CallbackResult("هذا الزر انلغى، البطاقات الجديدة بدونه")
         if data.startswith("s:"):
             return self._subject_callback(data, sender)
         action, _, raw_id = data.partition(":")
@@ -598,16 +620,6 @@ class StudyService:
                 task_card(task, today, header="✅ موعد مؤكد", style=self.style), self._card_buttons(task)
             )
             return CallbackResult("شكراً، تم تسجيل تأكيدك ✅" if is_new else "سبق وأكّدته 👍", edit=card)
-
-        if action == "x":
-            task = self.db.get_task(task_id)
-            if task is None:
-                return CallbackResult("هذا الموعد محذوف")
-            now_done = self.db.toggle_done(task_id, sender.user_id)
-            task = self.db.get_task(task_id)
-            card = Reply(task_card(task, today, header="📌 موعد مسجّل", style=self.style), self._card_buttons(task))
-            answer = "✔️ عاشت إيدك! انحسبت عليك خالصة" if now_done else "↩️ رجّعتها لقائمتك"
-            return CallbackResult(answer, edit=card)
 
         if action == "d":
             return CallbackResult("", new=self._ask_delete(task_id))
@@ -628,16 +640,3 @@ class StudyService:
             return CallbackResult("تم الإلغاء", edit=Reply("👌 تمام، ما حذفت شي."))
 
         return CallbackResult("❌ زر غير معروف")
-
-    def _personal_callback(self, data: str, sender: Sender) -> CallbackResult:
-        try:
-            _, raw_task, raw_owner = data.split(":")
-            task_id, owner = int(raw_task), int(raw_owner)
-        except ValueError:
-            return CallbackResult("❌ زر غير صالح")
-        if sender.user_id != owner:
-            return CallbackResult("هذي قائمة طالب ثاني 🙂 اكتب /mytasks حتى تشوف قائمتك")
-        if self.db.get_task(task_id) is None:
-            return CallbackResult("هذا الموعد محذوف", edit=self.personal_reply(sender))
-        self.db.mark_done(task_id, sender.user_id)
-        return CallbackResult("✔️ عاشت إيدك!", edit=self.personal_reply(sender))

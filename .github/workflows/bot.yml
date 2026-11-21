@@ -38,9 +38,7 @@ jobs:
           ALLOWED_CHAT_IDS: ${{ vars.ALLOWED_CHAT_IDS }}
           TIMEZONE: ${{ vars.TIMEZONE || 'Asia/Baghdad' }}
           WEEK_START: ${{ vars.WEEK_START || 'sunday' }}
-          MONTH_STYLE: ${{ vars.MONTH_STYLE || 'levantine' }}
           REMINDERS: ${{ vars.REMINDERS || 'true' }}
-          MORNING_TIME: ${{ vars.MORNING_TIME || '07:00' }}
-          EVENING_TIME: ${{ vars.EVENING_TIME || '20:00' }}
+          REMINDER_TIMES: ${{ vars.REMINDER_TIMES || '06:00,15:00,18:00,21:00' }}
         # exec: حتى تصل إشارة الإيقاف من GitHub للسكربت نفسه فيحفظ البيانات قبل الخروج
         run: exec ./scripts/actions_run.sh

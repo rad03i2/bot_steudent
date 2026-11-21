@@ -45,7 +45,7 @@ async def test_add_task_uses_code_date_over_llm():
     replies = await svc.handle_message("الخميس الجاي امتحان فيزياء الفصل 3 و 4", AHMED,
                                        chat_id=-100, is_private=False)
     assert len(replies) == 1
-    assert "الخميس 26 تشرين الثاني 2026" in replies[0].text
+    assert "الخميس 26/11" in replies[0].text and "تشرين" not in replies[0].text
     assert "باقي 6 أيام" in replies[0].text
     tasks = db.tasks_between(TODAY, date(2026, 12, 31))
     assert [(t.subject, t.due_date) for t in tasks] == [("اساسيات النفايات الخطرة", date(2026, 11, 26))]
@@ -144,7 +144,7 @@ async def test_query_schedule():
     replies = await svc.handle_message("شنو عدنا الأسبوع الجاي؟", SARA, chat_id=1, is_private=False)
     text = replies[0].text
     assert "جدول الأسبوع القادم" in text
-    assert "22 – 28 تشرين الثاني 2026" in text
+    assert "22/11 – 28/11" in text and "تشرين" not in text
     assert "الأحد 22/11" in text and "الخميس 26/11" in text
     assert "يوم ثقيل" in text  # امتحان + مشروع بنفس اليوم
     assert "تلوث التربة" not in text  # الفاينل خارج النطاق

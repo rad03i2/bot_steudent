@@ -10,31 +10,26 @@ from collections import defaultdict
 from datetime import date
 from html import escape
 
-from .arabic import MONTHS_LEVANTINE, MONTHS_STANDARD, WEEKDAY_NAMES_AR
+from .arabic import WEEKDAY_NAMES_AR
 from .dates import days_left_phrase, relative_day_label
 from .models import PRIORITY_DOTS, Task
 
 SEP = "━━━━━━━━━━━━━━━━━━"
 
 
-def month_name(month: int, style: str = "levantine") -> str:
-    names = MONTHS_LEVANTINE if style == "levantine" else MONTHS_STANDARD
-    return names[month - 1]
+def long_date(d: date, style: str = "", with_year: bool = False) -> str:
+    """"الخميس 26/11": اليوم والتاريخ بالأرقام بدون اسم الشهر وبدون السنة."""
+    return f"{WEEKDAY_NAMES_AR[d.weekday()]} {d.day}/{d.month}"
 
 
-def long_date(d: date, style: str = "levantine", with_year: bool = False) -> str:
-    text = f"{WEEKDAY_NAMES_AR[d.weekday()]} {d.day} {month_name(d.month, style)}"
-    return f"{text} {d.year}" if with_year else text
+def short_date(d: date) -> str:
+    return f"{d.day}/{d.month}"
 
 
-def range_title(start: date, end: date, style: str = "levantine") -> str:
+def range_title(start: date, end: date, style: str = "") -> str:
     if start == end:
-        return long_date(start, style, with_year=True)
-    if start.month == end.month and start.year == end.year:
-        return f"{start.day} – {end.day} {month_name(end.month, style)} {end.year}"
-    if start.year == end.year:
-        return f"{start.day} {month_name(start.month, style)} – {end.day} {month_name(end.month, style)} {end.year}"
-    return f"{start.day} {month_name(start.month, style)} {start.year} – {end.day} {month_name(end.month, style)} {end.year}"
+        return long_date(start)
+    return f"{short_date(start)} – {short_date(end)}"
 
 
 def _time_text(t: str | None) -> str | None:
@@ -184,5 +179,4 @@ def personal_list(
             f"📋 <b>مهام {escape(name)}</b>\n{SEP}\n\n"
             "🎉 ما باقي عليك شي! كلشي خالص.\nاستمر هيج 💪"
         )
-    text = schedule(tasks, title=f"باقي عليك يا {name}", start=start, end=end, today=today, style=style)
-    return text + "\n\n👇 اضغط على المهمة لما تخلصها"
+    return schedule(tasks, title=f"باقي عليك يا {name}", start=start, end=end, today=today, style=style)

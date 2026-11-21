@@ -105,12 +105,35 @@ def test_lectures_per_day():
 
 
 def test_special_requests_for_lectures():
-    svc, _ = make_service()
+    svc, _ = make_service()  # اليوم السبت 21/11
     assert svc.special_request("ابعث جدول الدروس") == "timetable"
-    assert svc.special_request("شنو عدنا محاضرات باجر؟") == "lectures:2026-11-22"
-    assert svc.special_request("محاضرات الخميس") == "lectures:2026-11-26"
+    # يوم واحد: صورة مقصوصة لذلك اليوم فقط
+    assert svc.special_request("شنو عدنا محاضرات باجر؟") == "timetable_day:2026-11-22"
+    assert svc.special_request("محاضرات الخميس") == "timetable_day:2026-11-26"
+    assert svc.special_request("جدول الاثنين") == "timetable_day:2026-11-23"
+    assert svc.special_request("جدول الدروس الثلاثاء") == "timetable_day:2026-11-24"
+    # يوم عطلة: رد نصي
+    assert svc.special_request("محاضرات الجمعة") == "lectures:2026-11-27"
+    # ليست طلب جدول دروس
     assert svc.special_request("الواجب بالمحاضرة الجاية") is None
     assert svc.special_request("محاضرة تعويضية الخميس") is None
+    assert svc.special_request("جدول الواجبات الخميس") is None
+    assert svc.special_request("مهام الاثنين") is None
+    assert svc.special_request("جدول اليوم") is None  # جدول المهام النصي (مع المحاضرات)
+    assert svc.special_request("جدول الاسبوع الجاي") is None
+
+
+def test_day_timetable_image_is_cropped_to_one_day():
+    svc, _ = make_service()
+    full, _ = svc.timetable_image()
+    day_png, caption = svc.timetable_day_image(date(2026, 11, 23))
+    full_img, day_img = Image.open(io.BytesIO(full)), Image.open(io.BytesIO(day_png))
+    assert day_img.width < full_img.width and day_img.height < full_img.height // 3
+    assert "الاثنين 23/11" in caption and "2026" not in caption
+    # الارتفاع يتبع عدد محاضرات اليوم: الأحد والأربعاء ثلاث محاضرات، الثلاثاء محاضرتان
+    h = {d: Image.open(io.BytesIO(svc.timetable_day_image(d)[0])).height for d in
+         (date(2026, 11, 22), date(2026, 11, 24), date(2026, 11, 25))}
+    assert h[date(2026, 11, 22)] == h[date(2026, 11, 25)] > h[date(2026, 11, 24)]
 
 
 def test_lectures_reply_and_holiday():

@@ -33,8 +33,8 @@ HEADS_UP_DAYS = {
     "other": 1,
 }
 
-# بعد الوقت المحدد بكم ساعة نتوقف عن محاولة الإرسال (حتى لا يصل "صباح الخير" بالليل)
-SEND_WINDOW = timedelta(hours=3)
+# بعد الوقت المحدد بكم نتوقف عن محاولة الإرسال (حتى لا يصل تذكير متأخراً جداً بعد انقطاع)
+SEND_WINDOW = timedelta(minutes=90)
 
 
 @dataclass
@@ -99,16 +99,45 @@ def morning_text(db: Database, today: date, style: str = "levantine") -> str | N
     return "\n".join(lines)
 
 
-def evening_text(db: Database, today: date, style: str = "levantine") -> str | None:
-    """تذكير المساء بمواعيد الغد. يرجع None إذا الغد فارغ."""
+def _slot_title(hour: int) -> str:
+    if hour < 12:
+        return "🌅 تذكير الصباح"
+    if hour < 17:
+        return "🕒 تذكير العصر"
+    if hour < 20:
+        return "🌆 تذكير المغرب"
+    return "🌙 تذكير الليل"
+
+
+def reminder_text(db: Database, today: date, hour: int, style: str = "levantine", *, final: bool = False) -> str | None:
+    """تذكير نهاري/مسائي: مواعيد اليوم وباجر. وفي آخر تذكير بالليل تُضاف محاضرات باجر.
+    يرجع None إذا ماكو شي يستحق التذكير."""
+    from .timetable import lecture_lines_html
+
     tomorrow = today + timedelta(days=1)
-    tasks = sorted(db.tasks_between(tomorrow, tomorrow), key=sort_key)
-    if not tasks:
+    # آخر تذكير بالليل: اليوم انتهى، فنذكّر بباجر فقط
+    today_tasks = [] if final else sorted(db.tasks_between(today, today), key=sort_key)
+    tomorrow_tasks = sorted(db.tasks_between(tomorrow, tomorrow), key=sort_key)
+    lectures = lecture_lines_html(tomorrow) if final else []
+    if not today_tasks and not tomorrow_tasks and not lectures:
         return None
-    lines = [f"🌙 <b>تذكير: عدكم باجر</b>", f"   {long_date(tomorrow, style)}", SEP]
-    lines.extend(task_line(t) for t in tasks)
+
+    lines = [f"<b>{_slot_title(hour)}</b>", SEP]
+    if today_tasks:
+        lines.append(f"📌 <b>اليوم ({long_date(today, style)}):</b>")
+        lines.extend(task_line(t) for t in today_tasks)
+    if tomorrow_tasks:
+        if today_tasks:
+            lines.append("")
+        lines.append(f"📅 <b>باجر ({long_date(tomorrow, style)}):</b>")
+        lines.extend(task_line(t) for t in tomorrow_tasks)
+    if lectures:
+        if today_tasks or tomorrow_tasks:
+            lines.append("")
+        lines.append(f"📚 <b>محاضرات باجر ({long_date(tomorrow, style)}):</b>")
+        lines.extend(lectures)
     lines.append(SEP)
-    lines.append("حضّروا زين وناموا بدري 😴")
+    lines.append("حضّروا زين وناموا بدري 😴" if final else "لا تنسون! 💪")
     return "\n".join(lines)
 
 
@@ -116,38 +145,58 @@ def weekly_text(db: Database, today: date, week_start: int, style: str = "levant
     """ملخص الأسبوع القادم (يُرسل مساء اليوم الأخير من الأسبوع)."""
     start, _ = week_bounds(today + timedelta(days=1), week_start)
     end = start + timedelta(days=6)
+    from .timetable import lecture_lines_html
+
     tasks = db.tasks_between(start, end)
-    return "📅 <b>ملخص الأسبوع</b>\n\n" + schedule(
+    text = "📅 <b>ملخص الأسبوع</b>\n\n" + schedule(
         tasks, title="جدول الأسبوع القادم", start=start, end=end, today=today, style=style
     )
+    lectures = lecture_lines_html(today + timedelta(days=1))
+    if lectures:
+        text += f"\n\n📚 <b>محاضرات باجر ({long_date(today + timedelta(days=1), style)}):</b>\n" + "\n".join(lectures)
+    return text
+
+
+def _slot_kind(t: time) -> str:
+    return f"r{t.hour:02d}{t.minute:02d}"
 
 
 def due_messages(db: Database, now: datetime, config: Config) -> list[Outgoing]:
-    """الرسائل التي حان وقتها ولم تُرسل اليوم. now بالتوقيت المحلي."""
+    """الرسائل التي حان وقتها ولم تُرسل اليوم. now بالتوقيت المحلي.
+
+    أول وقت باليوم = ملخص الصباح، وآخر وقت = تذكير الليل (وفي آخر يوم بالأسبوع ملخص الأسبوع
+    القادم بالصورة)، وما بينهما تذكيرات بمواعيد اليوم وباجر.
+    """
     if not config.reminders:
         return []
     today = now.date()
-    morning_at = _parse_hhmm(config.morning_time, time(7, 0))
-    evening_at = _parse_hhmm(config.evening_time, time(20, 0))
+    times = sorted({_parse_hhmm(t, time(0, 0)) for t in config.reminder_times})
     # اليوم الأخير من الأسبوع: غداً يبدأ أسبوع جديد
     is_week_end = (today + timedelta(days=1)).weekday() == config.week_start
 
     out: list[Outgoing] = []
-    texts: dict[str, str | None] = {}
-    weekly_image: bytes | None = None
-    for chat_id in db.reminder_chats():
-        if _in_window(now, morning_at) and not db.was_sent(chat_id, "morning", today):
-            if "morning" not in texts:
-                texts["morning"] = morning_text(db, today, config.month_style)
-            out.append(Outgoing(chat_id, "morning", texts["morning"] or ""))
-        if _in_window(now, evening_at) and not db.was_sent(chat_id, "evening", today):
-            if "evening" not in texts:
-                if is_week_end:
-                    texts["evening"] = weekly_text(db, today, config.week_start, config.month_style)
-                    weekly_image = _weekly_image(db, today, config)
+    cache: dict[str, tuple[str | None, bytes | None]] = {}
+    chats = db.reminder_chats()
+    for index, at in enumerate(times):
+        if not _in_window(now, at):
+            continue
+        kind = _slot_kind(at)
+        is_first, is_last = index == 0, index == len(times) - 1 and len(times) > 1
+        for chat_id in chats:
+            if db.was_sent(chat_id, kind, today):
+                continue
+            if kind not in cache:
+                image = None
+                if is_first:
+                    text = morning_text(db, today, config.month_style)
+                elif is_last and is_week_end:
+                    text = weekly_text(db, today, config.week_start, config.month_style)
+                    image = _weekly_image(db, today, config)
                 else:
-                    texts["evening"] = evening_text(db, today, config.month_style)
-            out.append(Outgoing(chat_id, "evening", texts["evening"] or "", weekly_image))
+                    text = reminder_text(db, today, at.hour, config.month_style, final=is_last)
+                cache[kind] = (text, image)
+            text, image = cache[kind]
+            out.append(Outgoing(chat_id, kind, text or "", image))
     return out
 
 

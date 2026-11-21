@@ -22,7 +22,7 @@ except ImportError:  # pragma: no cover - الإصدارات الأقدم
     from bidi.algorithm import get_display
 
 from .arabic import WEEKDAY_NAMES_AR
-from .formatting import month_name, range_title, sort_key
+from .formatting import short_date, sort_key
 from .models import Task
 
 FONTS_DIR = Path(__file__).parent / "assets" / "fonts"
@@ -215,7 +215,7 @@ def render_week(
     # ----- الترويسة -----
     draw.rectangle([0, 0, WIDTH, header_h], fill=COLORS["header"])
     draw_text(draw, title, right=right, y=34, size=48, fill=(255, 255, 255), bold=True)
-    draw_text(draw, range_title(days[0], days[-1], style), right=right, y=104, size=28, fill=COLORS["header_sub"])
+    draw_text(draw, f"من {short_date(days[0])} إلى {short_date(days[-1])}", right=right, y=104, size=28, fill=COLORS["header_sub"])
     total = len([t for t in tasks if days[0] <= t.due_date <= days[-1]])
     badge = f"{total} مهام" if 3 <= total <= 10 else ("مهمة واحدة" if total == 1 else ("مهمتان" if total == 2 else f"{total} مهمة"))
     bw = text_width(badge, 26, True) + 40
@@ -237,7 +237,7 @@ def render_week(
         )
         inner_r = WIDTH - PAD - 28
         inner_l = PAD + 28
-        day_label = f"{WEEKDAY_NAMES_AR[d.weekday()]}  {d.day} {month_name(d.month, style)}"
+        day_label = f"{WEEKDAY_NAMES_AR[d.weekday()]}  {short_date(d)}"
         draw_text(draw, day_label, right=inner_r, y=y + 12, size=30, fill=COLORS["text"], bold=True)
         if is_today:
             _pill(draw, "اليوم", left=inner_l, top=y + 14, fill=COLORS["border_today"], text_fill=(60, 45, 0))
@@ -288,8 +288,12 @@ LESSON_ROW = 92
 LESSON_DAY_HEADER = 64
 
 
-def render_timetable(today: date | None = None) -> bytes:
-    """صورة جدول دروس الشعبة: اليوم، الوقت، المادة، الأستاذ."""
+def render_timetable(today: date | None = None, day: int | None = None) -> bytes:
+    """صورة جدول دروس الشعبة: اليوم، الوقت، المادة، الأستاذ.
+
+    day: رقم اليوم (datetime.weekday). إذا حُدد نقصّ من الصورة الكاملة بطاقة ذلك اليوم فقط،
+    بدون الترويسة وبدون باقي الأيام.
+    """
     from .timetable import LECTURES, SECTION_DETAILS, SECTION_TITLE, SUBJECT_BY_NAME, SUN, time_range_text
 
     order = [SUN, 0, 1, 2, 3]  # الأحد إلى الخميس
@@ -309,9 +313,11 @@ def render_timetable(today: date | None = None) -> bytes:
     draw_text(draw, SECTION_DETAILS, right=right, y=142, size=22, fill=COLORS["header_sub"])
 
     y = header_h + PAD
+    boxes: dict[int, tuple[int, int]] = {}
     for d in order:
         lessons = by_day[d]
         card_h = LESSON_DAY_HEADER + len(lessons) * LESSON_ROW + CARD_PAD
+        boxes[d] = (y, y + card_h)
         is_today = today is not None and today.weekday() == d
         draw.rounded_rectangle(
             [PAD, y, WIDTH - PAD, y + card_h],
@@ -354,6 +360,10 @@ def render_timetable(today: date | None = None) -> bytes:
 
     draw_text(draw, "مُذكِّر الدفعة", right=right, y=height - footer_h + 14, size=24, fill=COLORS["footer"], bold=True)
     draw_text(draw, "الجمعة والسبت عطلة", left=PAD, y=height - footer_h + 16, size=22, fill=COLORS["footer"])
+    if day is not None and day in boxes:
+        top, bottom = boxes[day]
+        margin = 14
+        img = img.crop((PAD - margin, top - margin, WIDTH - PAD + margin, bottom + margin))
     buf = io.BytesIO()
     img.save(buf, format="PNG", optimize=True)
     return buf.getvalue()
