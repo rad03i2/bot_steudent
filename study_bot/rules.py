@@ -84,6 +84,7 @@ _STOP_WORDS = {
     "الجاي", "القادم", "الياي", "الجايه", "القادمه", "الاسبوع", "اسبوع", "بعد", "قبل", "ان", "انه",
     "الصبح", "بالليل", "الظهر", "العصر", "مساء", "صباحا", "ص", "م", "صعب", "سهل", "كلش", "اخي",
     "ابو", "حبايب", "يمعود", "تسليم", "التسليم", "deadline", "ديدلاين", "لا", "نعم", "اي", "ايه",
+    "خارجيه", "خارجي", "الخارجيه", "عند", "د", "دكتوره", "الدكتوره", "استاذه", "الاستاذه", "ست",
 }
 _CONTENT_MARKERS = {
     "الفصل", "فصل", "الفصول", "فصول", "شابتر", "الشابتر", "شابترات", "chapter", "chapters", "ch",
@@ -400,6 +401,9 @@ def _empty(intent: str, **kw) -> Analysis:
 
 def _split_segments(text: str) -> list[str]:
     """يقسّم الرسالة إلى أجزاء، كل جزء قد يحتوي موعداً مستقلاً."""
+    # النقطة بعد الألقاب المختصرة ("د. عمار"، "أ.م. طه") ليست نهاية جملة
+    for _ in range(2):
+        text = re.sub(r"(?:(?<=[\s.])|^)([دمأا])\.", r"\1 ", text)
     parts = re.split(r"[\n،;؛]+|(?<!\d)\.(?!\d)", text)
     kind_alt = "|".join(sorted((re.escape(w) for w in _KIND_OF_WORD if not w.isascii()), key=len, reverse=True))
     out = []
@@ -433,7 +437,7 @@ def analyze_message(req: AnalysisRequest) -> Analysis:
     # ----- "خلصت" (رداً على بطاقة، أو مع ذكر المهمة) -----
     talks_about_past = bool(word_set & (_PAST_WORDS - _DONE_WORDS))
     if word_set & _DONE_WORDS and not is_question and not talks_about_past:
-        if replied_id or kind or _mentions_known_subject(tokens, req.known_subjects):
+        if replied_id or kind or _subject_in(tokens, req)[0]:
             target, reply = _find_target(tokens, req, kind, dates, replied_id, for_delete=True)
             if target:
                 return _empty("done", target_task_id=target)
@@ -450,7 +454,7 @@ def analyze_message(req: AnalysisRequest) -> Analysis:
         return _empty("query", query=query)
 
     # ----- إلغاء -----
-    if word_set & _DELETE_WORDS and (kind or replied_id or _mentions_known_subject(tokens, req.known_subjects)):
+    if word_set & _DELETE_WORDS and (kind or replied_id or _subject_in(tokens, req)[0]):
         target, reply = _find_target(tokens, req, kind, dates, replied_id, for_delete=True)
         if target:
             return _empty("delete", target_task_id=target)
@@ -509,10 +513,33 @@ def _is_personal_query(words: set[str]) -> bool:
     )
 
 
+_EXTERNAL_WORDS = {"خارجيه", "خارجي", "الخارجيه", "الخارجي", "external"}
+_NEXT_LECTURE = (
+    "المحاضره الجايه", "المحاضره القادمه", "المحاضره الياي", "المحاضره الياييه", "المحاضره الجاييه",
+    "الحصه الجايه", "الحصه القادمه", "اللكچر الجاي", "المحاضره اللي جايه", "المحاضره الي جايه",
+    "بالمحاضره الجايه", "بالمحاضره القادمه", "بالحصه الجايه", "next lecture",
+)
+
+
+def _subject_in(tokens: list[Token], req: AnalysisRequest) -> tuple[str | None, str, set[int]]:
+    """المادة المذكورة: (الاسم المعتمد، الجزء مثل "أسس"، مواضع الكلمات)."""
+    if req.catalog is not None:
+        match = req.catalog.find([t.raw for t in tokens])
+        if match:
+            return match.subject, match.part, set(range(match.start, match.end))
+        return None, "", set()
+    name, used = find_known_subject(tokens, req.known_subjects)
+    return name, "", used
+
+
 def _extract_tasks(text: str, req: AnalysisRequest) -> list[ExtractedTask]:
+    from .timetable import next_lecture_date
+
     segments = _split_segments(text)
     whole_dates = find_dates(tokenize(text), req.today, req.week_start)
     shared_date = whole_dates[0] if len(whole_dates) == 1 else None
+    norm_text = " ".join(normalize(w) for w in text.split())
+    external = bool(set(norm_text.split()) & _EXTERNAL_WORDS)
     items: list[ExtractedTask] = []
     for seg in segments:
         tokens = tokenize(seg)
@@ -520,11 +547,6 @@ def _extract_tasks(text: str, req: AnalysisRequest) -> list[ExtractedTask]:
         if kind is None:
             continue
         dates = find_dates(tokens, req.today, req.week_start)
-        date_match = dates[0] if dates else shared_date
-        if date_match is None:
-            continue
-        if normalize(date_match.expression) in _NEXT_WEEK:
-            continue  # "الأسبوع الجاي" وحدها غير كافية لتحديد يوم الموعد
         used = set()
         for d in dates:
             used |= set(range(d.start, d.end))
@@ -532,19 +554,38 @@ def _extract_tasks(text: str, req: AnalysisRequest) -> list[ExtractedTask]:
         used |= time_used
         if kind_index is not None:
             used.add(kind_index)
-        subject, subject_used = find_known_subject(tokens, req.known_subjects)
+
+        subject, part, subject_used = _subject_in(tokens, req)
+        is_external = False
         if subject is None:
-            subject, subject_used = guess_subject(tokens, kind_index, used)
+            stop = used | {i for i, t in enumerate(tokens) if t.norm in _EXTERNAL_WORDS}
+            subject, subject_used = guess_subject(tokens, kind_index, stop)
+            is_external = external and subject is not None
         used |= subject_used
+
+        date_expression, due = None, None
+        date_match = dates[0] if dates else shared_date
+        if date_match is not None and normalize(date_match.expression) not in _NEXT_WEEK:
+            date_expression, due = date_match.expression, date_match.value
+        elif subject and any(p in norm_text for p in _NEXT_LECTURE):
+            # "الواجب بالمحاضرة الجاية": نحسب موعد المحاضرة القادمة من جدول الدروس
+            due = next_lecture_date(subject, req.today)
+            date_expression = "المحاضرة الجاية" if due else None
+        if due is None:
+            continue
+
         title = find_content(tokens, used)
+        if part and part not in title:
+            title = f"{part} – {title}" if title else part
         items.append(ExtractedTask(
             kind=kind,
-            subject=subject or "غير محددة",
+            subject=subject or "",
             title=title,
-            date_expression=date_match.expression,
-            date=date_match.value.isoformat(),
+            date_expression=date_expression or "",
+            date=due.isoformat(),
             time=time_value,
             notes=None,
+            external=is_external,
         ))
     return items
 
@@ -554,10 +595,6 @@ def _replied_task_id(replied_to: str | None) -> int | None:
         return None
     ids = _TASK_REF.findall(replied_to)
     return int(ids[-1]) if ids else None
-
-
-def _mentions_known_subject(tokens: list[Token], known: list[str]) -> bool:
-    return find_known_subject(tokens, known)[0] is not None
 
 
 def _kind_matches(task: Task, kind: str | None) -> bool:
@@ -579,7 +616,7 @@ def _find_target(
     upcoming = [t for t in req.upcoming if t.due_date >= req.today]
     if replied_id and any(t.id == replied_id for t in upcoming):
         return replied_id, ""
-    subject, _ = find_known_subject(tokens, req.known_subjects)
+    subject = _subject_in(tokens, req)[0]
     candidates = [
         t for t in upcoming
         if _kind_matches(t, kind) and (subject is None or subject_key(t.subject) == subject_key(subject))
@@ -634,7 +671,7 @@ def _build_query(tokens: list[Token], req: AnalysisRequest, kind: str | None, da
         start, end = today, today + timedelta(days=180 if long_range else 14)
         title = "المواعيد القادمة"
 
-    subject, _ = find_known_subject(tokens, req.known_subjects)
+    subject = _subject_in(tokens, req)[0]
     kinds: list[str] | None = None
     if kind is not None:
         kinds = sorted(EXAM_KINDS) if kind == "exam" else [kind]

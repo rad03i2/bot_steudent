@@ -65,17 +65,25 @@ def _heads_up(db: Database, today: date) -> list[Task]:
 
 
 def morning_text(db: Database, today: date, style: str = "levantine") -> str | None:
-    """ملخص الصباح: مواعيد اليوم + ما يقترب. يرجع None إذا لا يوجد شيء."""
+    """ملخص الصباح: محاضرات اليوم + مواعيد اليوم + ما يقترب. يرجع None إذا لا يوجد شيء."""
+    from .timetable import lecture_lines_html
+
     today_tasks = sorted(db.tasks_between(today, today), key=sort_key)
     soon = sorted(_heads_up(db, today), key=lambda t: (t.due_date, t.priority, t.id))
-    if not today_tasks and not soon:
+    lectures = lecture_lines_html(today)
+    if not today_tasks and not soon and not lectures:
         return None
 
-    lines = [f"☀️ <b>صباح الخير! جدول اليوم</b>", f"   {long_date(today, style)}", SEP]
+    lines = [f"☀️ <b>صباح الخير!</b>", f"   {long_date(today, style)}", SEP]
+    if lectures:
+        lines.append("📚 <b>محاضرات اليوم:</b>")
+        lines.extend(lectures)
+        lines.append("")
+    lines.append("📝 <b>مواعيد اليوم:</b>")
     if today_tasks:
         lines.extend(task_line(t) for t in today_tasks)
     else:
-        lines.append("   اليوم ماكو مواعيد 🎉")
+        lines.append("   ماكو امتحانات أو تسليمات اليوم 🎉")
 
     if soon:
         lines.append("")

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import io
 import logging
-from datetime import datetime
+from datetime import date, datetime
 
 from telegram import BotCommand, InlineKeyboardButton, InlineKeyboardMarkup, InputFile, Update
 from telegram.constants import ChatAction, ChatType, ParseMode
@@ -29,22 +29,25 @@ log = logging.getLogger(__name__)
 
 HELP_TEXT = """\
 📚 <b>أهلاً! أنا مُذكِّر الدفعة</b>
+المرحلة الرابعة – بولونيا – شعبة A
 
 أقرأ رسائل القروب، وأي موعد دراسي ينذكر أسجّله وأرتّبه تلقائياً.
+أعتمد مواد جدول الشعبة فقط، وأعرف المادة من اسمها أو اسم أستاذها (مثل <i>كويز د. عمار</i>).
+مادة من خارج الجدول؟ اكتب معها <i>مادة خارجية</i>.
 
 ✍️ <b>للإضافة</b> اكتبوا بشكل طبيعي، مثلاً:
-• <i>الخميس الجاي امتحان فيزياء الفصل الثالث والرابع</i>
-• <i>واجب رياضيات تمارين 4.1 لـ 4.5 تسليمه باجر الساعة 11 بالليل</i>
-• <i>الميد مال البرمجة 3/12</i>
+• <i>الخميس الجاي امتحان عند د. عمار الفصل الثالث</i>
+• <i>تقرير النفايات الخطرة تسليمه باجر الساعة 11 بالليل</i>
+• <i>واجب سمير بالمحاضرة الجاية</i>
 
 ✏️ <b>للتعديل أو الإلغاء:</b>
-• <i>كويز الكيمياء تأجل للأحد</i>
-• <i>انلغى واجب الإحصاء</i>
+• <i>كويز الانشائية تأجل للأحد</i>
+• <i>انلغى واجب الاقتصاد</i>
 
 ❓ <b>للسؤال:</b>
 • <i>شنو عدنا الأسبوع الجاي؟</i>
 • <i>مهام يوم الأربعاء</i>
-• <i>متى الفاينل مال الفيزياء؟</i>
+• <i>متى الفاينل مال تلوث التربة؟</i>
 
 ⚡️ <b>أوامر سريعة:</b>
 /today – جدول اليوم
@@ -53,7 +56,8 @@ HELP_TEXT = """\
 /nextweek – الأسبوع القادم
 /upcoming – كل القادم (30 يوم)
 /exams – الامتحانات القادمة
-/image – صورة جدول الأسبوع (و <code>/image next</code> للأسبوع الجاي)
+/timetable – صورة جدول الدروس (أو اكتب: <i>شنو عدنا محاضرات باجر؟</i>)
+/image – صورة جدول المهام للأسبوع (و <code>/image next</code> للأسبوع الجاي)
 /calendar – ملف تضيف منه كل المواعيد لتقويم جوالك
 
 ✔️ <b>لما تخلص مهمة:</b> اضغط "✔️ خلصت" على بطاقتها، أو اعمل Reply عليها واكتب <i>خلصت</i>.
@@ -71,7 +75,8 @@ COMMANDS = [
     ("upcoming", "كل المهام القادمة"),
     ("exams", "الامتحانات القادمة"),
     ("mytasks", "شنو باقي علي؟ (قائمتي الشخصية)"),
-    ("image", "صورة جدول الأسبوع (next للأسبوع الجاي)"),
+    ("timetable", "صورة جدول الدروس"),
+    ("image", "صورة جدول المهام للأسبوع (next للأسبوع الجاي)"),
     ("calendar", "ملف تقويم لإضافة المواعيد لجوالك"),
     ("reminders", "التذكيرات التلقائية (on/off)"),
     ("help", "طريقة الاستخدام"),
@@ -96,23 +101,33 @@ def _service(context: ContextTypes.DEFAULT_TYPE) -> StudyService:
     return context.application.bot_data["service"]
 
 
-def _allowed(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
-    """يقيّد البوت على قروب الدفعة إذا تم ضبط ALLOWED_CHAT_IDS."""
+async def _allowed(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
+    """البوت خاص بقروب الشعبة: يغادر أي قروب آخر، وعلى الخاص يرد فقط على أعضاء القروب."""
     service = _service(context)
-    allowed = service.config.allowed_chat_ids
     chat = update.effective_chat
     user = update.effective_user
     if chat is None or user is None:
         return False
-    if chat.type == ChatType.PRIVATE:
-        if not allowed:
-            return True
-        return service.db.is_member(user.id)
-    if allowed and chat.id not in allowed:
-        return False
-    service.db.touch_member(user.id, user.full_name or "")
-    service.db.register_chat(chat.id, chat.title or "")
-    return True
+    verdict = service.access(
+        chat.id,
+        is_private=chat.type == ChatType.PRIVATE,
+        user_id=user.id,
+        user_name=user.full_name or "",
+        title=chat.title or "",
+    )
+    if verdict == "ok":
+        return True
+    try:
+        if verdict == "leave":
+            await context.bot.send_message(chat.id, "🔒 هذا البوت خاص بشعبة A – المرحلة الرابعة بولونيا. مع السلامة 👋")
+            await context.bot.leave_chat(chat.id)
+        elif verdict == "stranger" and update.message is not None:
+            await update.message.reply_text(
+                "🔒 هذا البوت خاص بطلاب شعبة A. إذا أنت من الشعبة، اكتب أي رسالة بقروب الشعبة أول حتى أتعرف عليك."
+            )
+    except TelegramError:
+        log.warning("access response failed", exc_info=True)
+    return False
 
 
 async def _send(update: Update, reply: Reply) -> None:
@@ -127,7 +142,7 @@ async def _send(update: Update, reply: Reply) -> None:
 
 
 async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if not _allowed(update, context):
+    if not await _allowed(update, context):
         return
     await _send(update, Reply(HELP_TEXT))
 
@@ -140,7 +155,7 @@ async def cmd_chat_id(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 
 def _schedule_command(period: str):
     async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        if not _allowed(update, context):
+        if not await _allowed(update, context):
             return
         await _send(update, _service(context).schedule_reply(period))
 
@@ -152,7 +167,7 @@ async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     chat = update.effective_chat
     if message is None or chat is None or not message.text:
         return
-    if not _allowed(update, context):
+    if not await _allowed(update, context):
         return
 
     bot = context.bot
@@ -194,7 +209,7 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     query = update.callback_query
     if query is None or not query.data:
         return
-    if not _allowed(update, context):
+    if not await _allowed(update, context):
         await query.answer("غير مسموح")
         return
     result = _service(context).handle_callback(query.data, _sender(update))
@@ -217,6 +232,13 @@ async def _send_special(update: Update, service: StudyService, kind: str) -> Non
         await chat.send_action(ChatAction.UPLOAD_PHOTO)
         png, caption = service.week_image(next_week=kind == "image_next")
         await message.reply_photo(InputFile(io.BytesIO(png), filename="week.png"), caption=caption)
+    elif kind == "timetable":
+        await chat.send_action(ChatAction.UPLOAD_PHOTO)
+        png, caption = service.timetable_image()
+        await message.reply_photo(InputFile(io.BytesIO(png), filename="timetable.png"), caption=caption)
+    elif kind.startswith("lectures:"):
+        day = date.fromisoformat(kind.split(":", 1)[1])
+        await _send(update, service.lectures_reply(day))
     elif kind == "calendar":
         await chat.send_action(ChatAction.UPLOAD_DOCUMENT)
         data, caption = service.calendar_file()
@@ -226,27 +248,33 @@ async def _send_special(update: Update, service: StudyService, kind: str) -> Non
 
 
 async def cmd_image(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if not _allowed(update, context):
+    if not await _allowed(update, context):
         return
     nxt = bool(context.args) and context.args[0].lower() in ("next", "الجاي", "القادم")
     await _send_special(update, _service(context), "image_next" if nxt else "image")
 
 
+async def cmd_timetable(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not await _allowed(update, context):
+        return
+    await _send_special(update, _service(context), "timetable")
+
+
 async def cmd_calendar(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if not _allowed(update, context):
+    if not await _allowed(update, context):
         return
     await _send_special(update, _service(context), "calendar")
 
 
 async def cmd_mytasks(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if not _allowed(update, context):
+    if not await _allowed(update, context):
         return
     await _send(update, _service(context).personal_reply(_sender(update)))
 
 
 async def cmd_reminders(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """/reminders on|off: تشغيل أو إيقاف التذكيرات التلقائية لهذه المحادثة."""
-    if not _allowed(update, context):
+    if not await _allowed(update, context):
         return
     chat = update.effective_chat
     assert chat is not None
@@ -333,6 +361,7 @@ def build_application(config: Config) -> Application:
     app.add_handler(CommandHandler("mytasks", cmd_mytasks))
     app.add_handler(CommandHandler("image", cmd_image))
     app.add_handler(CommandHandler("calendar", cmd_calendar))
+    app.add_handler(CommandHandler("timetable", cmd_timetable))
     for name in ("today", "tomorrow", "week", "nextweek", "upcoming", "exams"):
         app.add_handler(CommandHandler(name, _schedule_command(name)))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, on_text))

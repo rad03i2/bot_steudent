@@ -28,7 +28,7 @@ def _buttons(reply):
 
 async def test_done_button_is_per_student():
     svc, db = make_service()
-    r = await say(svc, "باجر واجب رياضيات تمارين 5")
+    r = await say(svc, "باجر واجب انشائية تمارين 5")
     task_id = db.tasks_between(TODAY, date(2027, 1, 1))[0].id
     assert f"x:{task_id}" in _buttons(r[0])
 
@@ -42,26 +42,26 @@ async def test_done_button_is_per_student():
 
 async def test_personal_list_hides_done_tasks():
     svc, db = make_service()
-    await say(svc, "باجر واجب رياضيات")
-    await say(svc, "الخميس الجاي امتحان فيزياء")
+    await say(svc, "باجر واجب انشائية")
+    await say(svc, "الخميس الجاي امتحان النفايات")
     hw = [t for t in db.tasks_between(TODAY, date(2027, 1, 1)) if t.kind == "homework"][0]
 
-    r = await say(svc, "خلصت واجب الرياضيات")
+    r = await say(svc, "خلصت واجب الانشائية")
     assert "سجّلت إنك خلصت" in r[0].text and "باقي عليك 1" in r[0].text
 
     r = await say(svc, "شنو باقي علي؟")
-    assert "باقي عليك يا أحمد" in r[0].text and "فيزياء" in r[0].text and "رياضيات" not in r[0].text
+    assert "باقي عليك يا أحمد" in r[0].text and "النفايات" in r[0].text and "انشائية" not in r[0].text
 
     # سارة لم تنجز شيئاً: قائمتها فيها الاثنين
     r = await say(svc, "شنو باقي علي؟", SARA)
-    assert "رياضيات" in r[0].text and "فيزياء" in r[0].text
+    assert "انشائية" in r[0].text and "النفايات" in r[0].text
     assert all(d.endswith(f":{SARA.user_id}") for d in _buttons(r[0]))
     assert hw.id
 
 
 async def test_done_by_replying_to_card():
     svc, db = make_service()
-    r = await say(svc, "الأحد تقرير كيمياء")
+    r = await say(svc, "الأحد تقرير تقييم الأثر")
     card = r[0].text
     r = await say(svc, "خلصته", SARA, replied_to=card)
     task_id = db.tasks_between(TODAY, date(2027, 1, 1))[0].id
@@ -70,7 +70,7 @@ async def test_done_by_replying_to_card():
 
 async def test_personal_list_buttons_only_for_owner():
     svc, db = make_service()
-    await say(svc, "باجر واجب رياضيات")
+    await say(svc, "باجر واجب انشائية")
     r = svc.personal_reply(AHMED)
     data = _buttons(r)[0]
     assert "طالب ثاني" in svc.handle_callback(data, SARA).answer
@@ -81,6 +81,6 @@ async def test_personal_list_buttons_only_for_owner():
 async def test_all_done_message_and_past_chatter_not_marked():
     svc, db = make_service()
     assert "ما باقي عليك شي" in svc.personal_reply(AHMED).text
-    await say(svc, "الخميس الجاي امتحان فيزياء")
-    r = await say(svc, "خلصت امتحان الفيزياء كان سهل")
+    await say(svc, "الخميس الجاي امتحان النفايات")
+    r = await say(svc, "خلصت امتحان النفايات كان سهل")
     assert r == [] and db.done_ids(AHMED.user_id) == set()

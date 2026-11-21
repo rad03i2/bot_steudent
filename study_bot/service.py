@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import re
+import secrets
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 from html import escape
@@ -16,6 +17,7 @@ from .db import Database
 from .formatting import long_date, personal_list, schedule, task_card
 from .llm import Analysis, AnalysisRequest, Analyzer, ExtractedTask
 from .models import EXAM_KINDS, TASK_KINDS, Task, kind_of
+from .timetable import Catalog, lecture_lines_html, lectures_on
 
 log = logging.getLogger(__name__)
 
@@ -43,6 +45,17 @@ class CallbackResult:
 class Sender:
     user_id: int
     name: str
+
+
+@dataclass
+class _Pending:
+    """موعد ينتظر اختيار المادة من الأزرار."""
+
+    item: ExtractedTask
+    text: str
+    sender: Sender
+    chat_id: int | None
+    created: datetime
 
 
 # كلمات تدل على أن الرسالة قد تخص الدراسة؛ تُستخدم في القروبات لتقليل استدعاءات الذكاء الاصطناعي
@@ -97,6 +110,7 @@ class StudyService:
         self.analyzer = analyzer
         self.config = config
         self._today_fn = today_fn
+        self._pending: dict[str, _Pending] = {}
 
     @property
     def style(self) -> str:
@@ -135,7 +149,8 @@ class StudyService:
             start, end = today, today + timedelta(days=30)
             title = "كل المهام القادمة (30 يوماً)"
         tasks = self.db.tasks_between(start, end, kinds=kinds)
-        return Reply(schedule(tasks, title=title, start=start, end=end, today=today, style=self.style))
+        text = schedule(tasks, title=title, start=start, end=end, today=today, style=self.style)
+        return Reply(self._with_lectures(text, start, end))
 
     # ------------------------------------------------------------------
     # الصورة والتقويم
@@ -166,17 +181,62 @@ class StudyService:
         )
         return build_ics(tasks, self.config.tz), caption
 
-    @staticmethod
-    def special_request(text: str) -> str | None:
-        """طلبات لا تحتاج تحليلاً: صورة الجدول أو ملف التقويم."""
+    def special_request(self, text: str) -> str | None:
+        """طلبات لا تحتاج تحليلاً: صورة جدول المهام، جدول الدروس، محاضرات يوم معيّن، ملف التقويم."""
         t = normalize(text)
         words = set(t.split())
-        if words & {"صوره", "صورة", "بالصوره"} and words & {"جدول", "الجدول", "الاسبوع", "اسبوع", "للجدول"}:
+        lecture_words = {"محاضرات", "المحاضرات", "محاضره", "المحاضره", "دروس", "الدروس", "حصص", "الحصص",
+                         "دوام", "الدوام", "lectures", "timetable"}
+        if words & {"جدول", "الجدول", "للجدول"} and words & lecture_words:
+            return "timetable"
+        if words & {"صوره", "بالصوره"} and words & {"جدول", "الجدول", "الاسبوع", "اسبوع", "للجدول"}:
             nxt = bool(words & {"الجاي", "القادم", "الياي", "المقبل"})
             return "image_next" if nxt else "image"
         if words & {"تقويم", "التقويم", "كاليندر", "calendar", "ics"} and len(words) <= 3:
             return "calendar"
+        if words & lecture_words and not words & {"تعويضيه", "تعويضي", "الجايه", "القادمه"}:
+            from .rules import find_dates, find_kind, tokenize
+
+            tokens = tokenize(text)
+            kind, _ = find_kind(tokens)
+            if kind not in (None, "lecture"):
+                return None  # "الواجب بالمحاضرة" وما شابه: هذا موعد وليس سؤالاً عن المحاضرات
+            dates = find_dates(tokens, self.today(), self.config.week_start)
+            asks = bool(words & {"شنو", "شكو", "وش", "ايش", "شو", "متى", "شني", "اشكو", "عدنا", "عندنا"}) or "؟" in text or "?" in text
+            if dates or asks:
+                day = dates[0].value if dates else self.today()
+                return f"lectures:{day.isoformat()}"
         return None
+
+    def lectures_reply(self, day: date) -> Reply:
+        lines = self._lecture_lines(day)
+        rel = {0: "اليوم", 1: "باجر"}.get((day - self.today()).days)
+        head = f"📚 <b>محاضرات {rel + ' – ' if rel else ''}{long_date(day, self.style)}</b>"
+        if not lines:
+            nxt = next(
+                (day + timedelta(days=i) for i in range(1, 8) if lectures_on(day + timedelta(days=i))), None
+            )
+            tail = f"\nأول محاضرات بعدها: {long_date(nxt, self.style)}" if nxt else ""
+            return Reply(f"{head}\n\n🎉 ماكو محاضرات هذا اليوم.{tail}")
+        return Reply(head + "\n━━━━━━━━━━━━━━━━━━\n" + "\n".join(lines) + "\n\nالجدول كامل: /timetable")
+
+    @staticmethod
+    def _lecture_lines(day: date) -> list[str]:
+        return lecture_lines_html(day)
+
+    def _with_lectures(self, text: str, start: date, end: date) -> str:
+        """جدول يوم واحد: نضيف محاضرات ذلك اليوم تحت المهام."""
+        if start != end:
+            return text
+        lines = self._lecture_lines(start)
+        if not lines:
+            return text
+        return text + "\n\n📚 <b>محاضرات اليوم نفسه:</b>\n" + "\n".join(lines)
+
+    def timetable_image(self) -> tuple[bytes, str]:
+        from .image import render_timetable
+
+        return render_timetable(self.today()), "📚 جدول الدروس – المرحلة الرابعة بولونيا شعبة A"
 
     # ------------------------------------------------------------------
     # الرسائل النصية
@@ -213,7 +273,8 @@ class StudyService:
             today=today,
             week_start=self.config.week_start,
             sender_name=sender.name,
-            known_subjects=self.db.known_subjects(),
+            known_subjects=self.catalog().names,
+            catalog=self.catalog(),
             upcoming=upcoming,
             replied_to=replied_to,
             direct=is_private or addressed,
@@ -273,9 +334,44 @@ class StudyService:
             return resolved
         return _parse_iso(llm_date)
 
-    def _add_task(self, item: ExtractedTask, text: str, sender: Sender, chat_id: int | None) -> Reply:
+    def access(self, chat_id: int, *, is_private: bool, user_id: int, user_name: str, title: str = "") -> str:
+        """من يحق له استخدام البوت. يرجع: ok / stranger (خاص من شخص ليس بالقروب) / leave (قروب آخر)."""
+        allowed = self.config.allowed_chat_ids
+        if is_private:
+            if not allowed and not self.config.private_mode:
+                return "ok"
+            return "ok" if self.db.is_member(user_id) else "stranger"
+        if allowed:
+            if chat_id not in allowed:
+                return "leave"
+        elif self.config.private_mode:
+            home = self.db.home_chat()
+            if home is None:
+                self.db.set_home_chat(chat_id)  # أول قروب يستخدم البوت يصير قروب الشعبة
+            elif chat_id != home:
+                return "leave"
+        self.db.touch_member(user_id, user_name)
+        self.db.register_chat(chat_id, title)
+        return "ok"
+
+    def catalog(self) -> Catalog:
+        return Catalog(external=self.db.external_subjects())
+
+    def _add_task(
+        self, item: ExtractedTask, text: str, sender: Sender, chat_id: int | None, *, chosen: bool = False
+    ) -> Reply:
         today = self.today()
         due = self._resolve_due(item.date_expression, item.date)
+        if not chosen:
+            # البوت يعتمد مواد جدول الشعبة فقط
+            catalog = self.catalog()
+            canonical = catalog.resolve(item.subject)
+            if canonical is None and item.external and item.subject.strip():
+                canonical = item.subject.strip()
+                self.db.add_external_subject(canonical, sender.name)
+            if canonical is None:
+                return self._ask_subject(item, text, sender, chat_id, due)
+            item = item.model_copy(update={"subject": canonical})
         label = f"{kind_of(item.kind).label} {item.subject}"
         if due is None:
             return Reply(f"🤔 فهمت إنه أكو <b>{escape(label)}</b>، بس متى بالضبط؟ اكتب اليوم أو التاريخ.")
@@ -318,6 +414,57 @@ class StudyService:
             )
             reply.buttons.append([Button(f"🗑 حذف القديم #{other.id}", f"d:{other.id}")])
         return reply
+
+    def _ask_subject(
+        self, item: ExtractedTask, text: str, sender: Sender, chat_id: int | None, due: date | None
+    ) -> Reply:
+        """المادة غير موجودة بجدول الشعبة (أو لم تُذكر): نسأل بأزرار بدل ما نحفظ."""
+        token = secrets.token_hex(4)
+        self._pending[token] = _Pending(item, text, sender, chat_id, datetime.now())
+        self._cleanup_pending()
+        kind_label = kind_of(item.kind).label
+        when = f" يوم {long_date(due, self.style)}" if due else ""
+        if item.subject.strip():
+            head = (
+                f"⚠️ «{escape(item.subject)}» مو من مواد جدول الشعبة، فما سجلت {escape(kind_label)}{when}.\n"
+                "إذا قصدك مادة من الجدول اختارها 👇، وإذا هي مادة خارجية اضغط ➕"
+            )
+        else:
+            head = f"📚 فهمت إنه أكو <b>{escape(kind_label)}</b>{when}، بس أي مادة؟ اختار 👇"
+        buttons = [[Button(name, f"s:{token}:{i}")] for i, name in enumerate(self.catalog().names)]
+        if item.subject.strip():
+            buttons.append([Button(f"➕ «{item.subject}» مادة خارجية"[:60], f"s:{token}:x")])
+        buttons.append([Button("❌ إلغاء", f"s:{token}:n")])
+        return Reply(head, buttons)
+
+    def _cleanup_pending(self) -> None:
+        cutoff = datetime.now() - timedelta(hours=24)
+        for key in [k for k, p in self._pending.items() if p.created < cutoff]:
+            del self._pending[key]
+
+    def _subject_callback(self, data: str, sender: Sender) -> CallbackResult:
+        try:
+            _, token, choice = data.split(":")
+        except ValueError:
+            return CallbackResult("❌ زر غير صالح")
+        pending = self._pending.pop(token, None)
+        if pending is None:
+            return CallbackResult("انتهت صلاحية هذا السؤال، اكتب الموعد مرة ثانية", edit=Reply("⌛️ انتهت صلاحية هذا السؤال."))
+        if choice == "n":
+            return CallbackResult("تم الإلغاء", edit=Reply("👌 تمام، ما سجلت شي."))
+        item = pending.item
+        if choice == "x":
+            name = item.subject.strip()
+            self.db.add_external_subject(name, sender.name)
+        else:
+            names = self.catalog().names
+            try:
+                name = names[int(choice)]
+            except (ValueError, IndexError):
+                return CallbackResult("❌ اختيار غير صالح")
+        item = item.model_copy(update={"subject": name})
+        reply = self._add_task(item, pending.text, pending.sender, pending.chat_id, chosen=True)
+        return CallbackResult("تم ✅", edit=reply)
 
     @staticmethod
     def _card_buttons(task: Task) -> list[list[Button]]:
@@ -418,12 +565,14 @@ class StudyService:
             start, end = end, start
         end = min(end, start + timedelta(days=366))
         kinds = [k for k in (q.kinds or []) if k in TASK_KINDS] or None
-        tasks = self.db.tasks_between(start, end, subject=q.subject, kinds=kinds)
+        subject = self.catalog().resolve(q.subject) or q.subject
+        tasks = self.db.tasks_between(start, end, subject=subject, kinds=kinds)
         if not tasks and q.subject:
             # ربما كُتب اسم المادة بشكل مختلف: نعرض بدون فلتر المادة
             tasks = [t for t in self.db.tasks_between(start, end, kinds=kinds)
                      if normalize(q.subject) in normalize(t.subject) or normalize(t.subject) in normalize(q.subject)]
-        return Reply(schedule(tasks, title=q.title or "الجدول", start=start, end=end, today=today, style=self.style))
+        text = schedule(tasks, title=q.title or "الجدول", start=start, end=end, today=today, style=self.style)
+        return Reply(self._with_lectures(text, start, end))
 
     # ------------------------------------------------------------------
     # الأزرار
@@ -432,6 +581,8 @@ class StudyService:
     def handle_callback(self, data: str, sender: Sender) -> CallbackResult:
         if data.startswith("m:"):
             return self._personal_callback(data, sender)
+        if data.startswith("s:"):
+            return self._subject_callback(data, sender)
         action, _, raw_id = data.partition(":")
         try:
             task_id = int(raw_id)

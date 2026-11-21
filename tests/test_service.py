@@ -29,8 +29,8 @@ def make_service(analyzer=None):
 
 
 def add_analysis(**kw) -> Analysis:
-    task = dict(kind="exam", subject="فيزياء", title="الفصل 3 و 4", date_expression="الخميس الجاي",
-                date="2026-11-26", time=None, notes=None)
+    task = dict(kind="exam", subject="اساسيات النفايات الخطرة", title="الفصل 3 و 4",
+                date_expression="الخميس الجاي", date="2026-11-26", time=None, notes=None, external=False)
     task.update(kw)
     return Analysis(intent="add", tasks=[ExtractedTask(**task)], target_task_id=None, changes=None,
                     query=None, reply=None)
@@ -48,7 +48,7 @@ async def test_add_task_uses_code_date_over_llm():
     assert "الخميس 26 تشرين الثاني 2026" in replies[0].text
     assert "باقي 6 أيام" in replies[0].text
     tasks = db.tasks_between(TODAY, date(2026, 12, 31))
-    assert [(t.subject, t.due_date) for t in tasks] == [("فيزياء", date(2026, 11, 26))]
+    assert [(t.subject, t.due_date) for t in tasks] == [("اساسيات النفايات الخطرة", date(2026, 11, 26))]
     assert fake.requests[0].today == TODAY
 
 
@@ -58,7 +58,7 @@ async def test_duplicate_is_confirmed_not_duplicated():
     svc, db = make_service(fake)
     fake.next = add_analysis()
     await svc.handle_message("الخميس امتحان فيزياء", AHMED, chat_id=1, is_private=False)
-    fake.next = add_analysis(subject="الفيزياء")
+    fake.next = add_analysis(subject="النفايات الخطرة")
     replies = await svc.handle_message("ترى الخميس امتحان الفيزياء", SARA, chat_id=1, is_private=False)
     assert "مسجّل مسبقاً" in replies[0].text
     assert "مؤكد من طالبين" in replies[0].text
@@ -129,9 +129,9 @@ async def test_query_schedule():
     svc, db = make_service(fake)
     for kw in [
         dict(),
-        dict(kind="homework", subject="رياضيات", title="تمارين 4.1", date_expression="الأحد", date=None),
-        dict(kind="project", subject="برمجة", title="المرحلة الأولى", date_expression="26/11", date=None),
-        dict(kind="final", subject="كيمياء", title="", date_expression="10/1", date=None),
+        dict(kind="homework", subject="تقييم الأثر البيئي", title="تمارين 4.1", date_expression="الأحد", date=None),
+        dict(kind="project", subject="المشروع الهندسي 1", title="المرحلة الأولى", date_expression="26/11", date=None),
+        dict(kind="final", subject="تلوث التربة والمياه الجوفية", title="", date_expression="10/1", date=None),
     ]:
         fake.next = add_analysis(**kw)
         await svc.handle_message("x امتحان", AHMED, chat_id=1, is_private=False)
@@ -147,10 +147,10 @@ async def test_query_schedule():
     assert "22 – 28 تشرين الثاني 2026" in text
     assert "الأحد 22/11" in text and "الخميس 26/11" in text
     assert "يوم ثقيل" in text  # امتحان + مشروع بنفس اليوم
-    assert "كيمياء" not in text  # الفاينل خارج النطاق
+    assert "تلوث التربة" not in text  # الفاينل خارج النطاق
     assert "المجموع: 3 مهام" in text
     # الامتحان يظهر قبل المشروع في نفس اليوم (أولوية أعلى)
-    assert text.index("امتحان فيزياء") < text.index("مشروع برمجة")
+    assert text.index("امتحان اساسيات النفايات") < text.index("مشروع المشروع الهندسي")
 
 
 def test_schedule_commands_and_empty():

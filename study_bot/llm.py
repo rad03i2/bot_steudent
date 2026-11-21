@@ -14,6 +14,7 @@ from typing import Literal, Optional, Protocol
 from pydantic import BaseModel, Field, ValidationError
 
 from .dates import calendar_reference
+from .timetable import SUBJECTS, Catalog
 from .models import Task
 
 log = logging.getLogger(__name__)
@@ -32,6 +33,7 @@ class ExtractedTask(BaseModel):
     date: Optional[str] = Field(description="التاريخ YYYY-MM-DD من التقويم المرجعي، أو null إن لم يُذكر")
     time: Optional[str] = Field(description="الوقت HH:MM بنظام 24 ساعة أو null")
     notes: Optional[str] = Field(description="ملاحظات إضافية مهمة أو null")
+    external: bool = Field(description="true فقط إذا قال الطالب صراحة إنها مادة خارجية (ليست من جدول الشعبة)")
 
 
 class TaskChanges(BaseModel):
@@ -83,7 +85,7 @@ SYSTEM_PROMPT = """\
    - "الأسبوع الجاي يوم الخميس" = خميس الأسبوع القادم حسب التقويم.
    - "باجر/بكرة/غداً" = الغد.
    - انسخ التعبير الزمني حرفياً كما ورد في date_expression (مثل "الخميس الجاي" أو "باجر" أو "26/11").
-2. المادة: إن كانت المادة تطابق مادة في "المواد المعروفة" (حتى لو كُتبت بشكل مختلف أو بالإنجليزية أو باختصار)، استخدم الاسم المعروف حرفياً. وإلا اكتب اسمها بالعربية بشكل نظيف بدون "ال" التعريف الزائدة إلا إن كانت جزءاً من الاسم.
+2. المادة: البوت خاص بشعبة واحدة ومواده محددة في known_subjects. إذا ذُكرت المادة أو اسم أستاذها (مثل "د. عمار" أو "سمير") أو اختصارها، اكتب اسم المادة المعتمد حرفياً كما في القائمة. "تصاميم انشائية (أسس)" هي نفس مادة "تصاميم انشائية" (ضع "أسس" في title). إذا ذكر الطالب مادة ليست في القائمة، اكتب اسمها كما ورد واجعل external=true فقط إذا قال صراحة إنها مادة خارجية، وإلا external=false. إذا لم تُذكر مادة أبداً اكتب subject="".
 3. النوع: ميد/mid/نصفي = midterm، فاينل/final/نهائي = final، كويز/quiz/اختبار قصير = quiz، امتحان/اختبار (غير محدد) = exam، واجب/homework/assignment/شيت = homework، تقرير/report = report، مشروع/project = project، برزنتيشن/عرض/سمنار = presentation، مختبر/لاب = lab، محاضرة = lecture، غير ذلك = other.
 4. title: وصف قصير جداً للمحتوى ("الفصل 3 و 4"، "تمارين 4.1 إلى 4.5"). لا تكرر اسم المادة أو النوع فيه. إن لم يُذكر محتوى اتركه "".
 5. رسالة واحدة قد تحتوي عدة مهام؛ أضفها كلها في tasks.
@@ -115,6 +117,17 @@ class AnalysisRequest:
     upcoming: list[Task]
     replied_to: str | None = None
     direct: bool = False  # رسالة خاصة أو موجهة للبوت
+    catalog: "Catalog | None" = None  # مواد الشعبة (من جدول الدروس) + المواد الخارجية
+
+
+def _subjects_context(req: AnalysisRequest) -> str:
+    if req.catalog is None:
+        return "، ".join(req.known_subjects) if req.known_subjects else "(لا يوجد بعد)"
+    lines = [
+        f"{s.name} | {'، '.join(s.teachers) or '-'} | {'، '.join(s.aliases[:5])}" for s in SUBJECTS
+    ]
+    lines += [f"{name} | مادة خارجية | -" for name in req.catalog.external]
+    return "\n".join(lines)
 
 
 def build_user_prompt(req: AnalysisRequest) -> str:
@@ -122,8 +135,8 @@ def build_user_prompt(req: AnalysisRequest) -> str:
         "<calendar>\nالتقويم المرجعي (التاريخ، اليوم، الأسبوع):\n"
         + calendar_reference(req.today, week_start=req.week_start)
         + "\n</calendar>",
-        "<known_subjects>\n"
-        + ("، ".join(req.known_subjects) if req.known_subjects else "(لا يوجد بعد)")
+        "<known_subjects>\nمواد الشعبة المعتمدة فقط (الاسم | الأساتذة | أسماء مختصرة):\n"
+        + _subjects_context(req)
         + "\n</known_subjects>",
         "<registered_tasks>\nالمهام المسجلة حالياً (رقم | نوع | مادة | محتوى | تاريخ):\n"
         + _tasks_context(req.upcoming)

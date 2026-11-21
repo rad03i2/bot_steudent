@@ -46,6 +46,17 @@ CREATE TABLE IF NOT EXISTS done (
     PRIMARY KEY (task_id, user_id)
 );
 
+CREATE TABLE IF NOT EXISTS settings (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS external_subjects (
+    name TEXT PRIMARY KEY,
+    added_by TEXT NOT NULL DEFAULT '',
+    added_at TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS chats (
     chat_id INTEGER PRIMARY KEY,
     title TEXT NOT NULL DEFAULT '',
@@ -235,6 +246,42 @@ class Database:
 
     def done_ids(self, user_id: int) -> set[int]:
         return {r["task_id"] for r in self.conn.execute("SELECT task_id FROM done WHERE user_id = ?", (user_id,))}
+
+    # ---------- قروب الشعبة ----------
+
+    def home_chat(self) -> int | None:
+        """قروب الشعبة الذي يخدمه البوت. إن لم يُحدد: القروب الذي فيه أكثر المهام المسجلة."""
+        row = self.conn.execute("SELECT value FROM settings WHERE key = 'home_chat'").fetchone()
+        if row:
+            return int(row["value"])
+        row = self.conn.execute(
+            "SELECT chat_id FROM tasks WHERE chat_id < 0 GROUP BY chat_id ORDER BY COUNT(*) DESC LIMIT 1"
+        ).fetchone()
+        if row is None:
+            row = self.conn.execute("SELECT chat_id FROM chats WHERE chat_id < 0 ORDER BY rowid LIMIT 1").fetchone()
+        if row is None:
+            return None
+        self.set_home_chat(row["chat_id"])
+        return row["chat_id"]
+
+    def set_home_chat(self, chat_id: int) -> None:
+        self.conn.execute(
+            "INSERT INTO settings VALUES ('home_chat', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            (str(chat_id),),
+        )
+        self.conn.commit()
+
+    # ---------- المواد الخارجية ----------
+
+    def external_subjects(self) -> list[str]:
+        return [r["name"] for r in self.conn.execute("SELECT name FROM external_subjects ORDER BY added_at")]
+
+    def add_external_subject(self, name: str, added_by: str) -> None:
+        self.conn.execute(
+            "INSERT OR IGNORE INTO external_subjects VALUES (?, ?, ?)",
+            (name.strip(), added_by, datetime.now().isoformat(timespec="seconds")),
+        )
+        self.conn.commit()
 
     # ---------- القروبات والتذكيرات ----------
 

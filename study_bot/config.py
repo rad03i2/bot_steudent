@@ -36,6 +36,7 @@ class Config:
     db_path: str = "data/study_bot.db"
     allowed_chat_ids: frozenset[int] = field(default_factory=frozenset)
     group_prefilter: bool = True
+    private_mode: bool = True  # البوت خاص بقروب الشعبة فقط
     reminders: bool = True
     morning_time: str = "07:00"  # ملخص اليوم + اقتراب الامتحانات
     evening_time: str = "20:00"  # تذكير بمواعيد الغد + الملخص الأسبوعي
@@ -65,6 +66,7 @@ class Config:
             allowed_chat_ids=_parse_ids(os.getenv("ALLOWED_CHAT_IDS", "")),
             group_prefilter=os.getenv("GROUP_PREFILTER", "true").lower() not in ("0", "false", "no"),
             reminders=os.getenv("REMINDERS", "true").lower() not in ("0", "false", "no"),
+            private_mode=os.getenv("PRIVATE_MODE", "true").lower() not in ("0", "false", "no"),
             morning_time=os.getenv("MORNING_TIME") or "07:00",
             evening_time=os.getenv("EVENING_TIME") or "20:00",
         )

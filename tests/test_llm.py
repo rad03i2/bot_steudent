@@ -13,7 +13,7 @@ ANALYSIS = {
     "intent": "add",
     "tasks": [{
         "kind": "exam", "subject": "فيزياء", "title": "الفصل 3", "date_expression": "الخميس الجاي",
-        "date": "2026-11-26", "time": None, "notes": None,
+        "date": "2026-11-26", "time": None, "notes": None, "external": False,
     }],
     "target_task_id": None, "changes": None, "query": None, "reply": None,
 }

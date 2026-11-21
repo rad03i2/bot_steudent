@@ -97,9 +97,16 @@ def _runs(visual: str) -> list[tuple[str, str]]:
     return runs
 
 
+_MIRROR = str.maketrans("()[]{}<>«»", ")(][}{><»«")
+
+
 def _visual(text: str) -> str:
     # base_dir="R": الاتجاه الأساسي من اليمين لليسار حتى في النصوص المختلطة ("كويز Physics – chapter 3")
-    return get_display(arabic_reshaper.reshape(text), base_dir="R")
+    visual = get_display(arabic_reshaper.reshape(text), base_dir="R")
+    # python-bidi لا يعكس الأقواس، فنعكسها في النص العربي حتى تظهر "(أسس)" وليس ")أسس("
+    if any(_is_arabic_glyph(ch) for ch in text):
+        visual = visual.translate(_MIRROR)
+    return visual
 
 
 def text_width(text: str, size: int, bold: bool = False) -> int:
@@ -268,6 +275,85 @@ def render_week(
         lx += 26
         lx += draw_text(draw, name, left=lx, y=height - footer_h + 26, size=22, fill=COLORS["footer"]) + 22
 
+    buf = io.BytesIO()
+    img.save(buf, format="PNG", optimize=True)
+    return buf.getvalue()
+
+
+# ---------------------------------------------------------------------------
+# جدول الدروس الأسبوعي
+# ---------------------------------------------------------------------------
+
+LESSON_ROW = 92
+LESSON_DAY_HEADER = 64
+
+
+def render_timetable(today: date | None = None) -> bytes:
+    """صورة جدول دروس الشعبة: اليوم، الوقت، المادة، الأستاذ."""
+    from .timetable import LECTURES, SECTION_DETAILS, SECTION_TITLE, SUBJECT_BY_NAME, SUN, time_range_text
+
+    order = [SUN, 0, 1, 2, 3]  # الأحد إلى الخميس
+    by_day = {d: sorted((lec for lec in LECTURES if lec.weekday == d), key=lambda lec: lec.start) for d in order}
+
+    header_h = 190
+    body_h = sum(LESSON_DAY_HEADER + len(by_day[d]) * LESSON_ROW + CARD_PAD + CARD_GAP for d in order)
+    footer_h = 70
+    height = header_h + PAD + body_h + footer_h
+    img = Image.new("RGB", (WIDTH, height), COLORS["bg"])
+    draw = ImageDraw.Draw(img)
+    right = WIDTH - PAD
+
+    draw.rectangle([0, 0, WIDTH, header_h], fill=COLORS["header"])
+    draw_text(draw, "جدول الدروس", right=right, y=26, size=50, fill=(255, 255, 255), bold=True)
+    draw_text(draw, SECTION_TITLE, right=right, y=100, size=28, fill=(255, 255, 255))
+    draw_text(draw, SECTION_DETAILS, right=right, y=142, size=22, fill=COLORS["header_sub"])
+
+    y = header_h + PAD
+    for d in order:
+        lessons = by_day[d]
+        card_h = LESSON_DAY_HEADER + len(lessons) * LESSON_ROW + CARD_PAD
+        is_today = today is not None and today.weekday() == d
+        draw.rounded_rectangle(
+            [PAD, y, WIDTH - PAD, y + card_h],
+            radius=22,
+            fill=COLORS["card_today"] if is_today else COLORS["card"],
+            outline=COLORS["border_today"] if is_today else COLORS["line"],
+            width=3 if is_today else 2,
+        )
+        inner_r = WIDTH - PAD - 28
+        inner_l = PAD + 28
+        draw_text(draw, WEEKDAY_NAMES_AR[d], right=inner_r, y=y + 10, size=32, fill=COLORS["text"], bold=True)
+        if is_today:
+            _pill(draw, "اليوم", left=inner_l, top=y + 14, fill=COLORS["border_today"], text_fill=(60, 45, 0))
+        ty = y + LESSON_DAY_HEADER
+        for lec in lessons:
+            draw.line([inner_l, ty, inner_r, ty], fill=COLORS["line"], width=2)
+            subject = SUBJECT_BY_NAME[lec.subject]
+            # الوقت في شارة ملونة على اليمين
+            # الوقت يُكتب من اليسار لليمين كما في الجدول الرسمي: 8:00 – 10:00
+            time_text = time_range_text(lec)
+            time_font = _font("lat", True, 24)
+            tw = int(time_font.getlength(time_text)) + 28
+            box_top = ty + 14
+            draw.rounded_rectangle([inner_r - tw, box_top, inner_r, box_top + 40], radius=12, fill=subject.color)
+            _, bt, _, bb = time_font.getbbox(time_text)
+            draw.text((inner_r - tw + 14, box_top + (40 - (bb - bt)) // 2 - bt), time_text, font=time_font,
+                      fill=(255, 255, 255))
+            name = lec.subject + (f" ({lec.part})" if lec.part else "")
+            text_r = inner_r - tw - 18
+            name = fit_text(name, text_r - inner_l, 27, True)
+            draw_text(draw, name, right=text_r, y=ty + 10, size=27, fill=COLORS["text"], bold=True)
+            details = " + ".join(lec.teachers) if lec.teachers else ""
+            if lec.note:
+                details = f"{details}  •  {lec.note}" if details else lec.note
+            if details:
+                details = fit_text(details, text_r - inner_l, 21)
+                draw_text(draw, details, right=text_r, y=ty + 52, size=21, fill=COLORS["muted"])
+            ty += LESSON_ROW
+        y += card_h + CARD_GAP
+
+    draw_text(draw, "مُذكِّر الدفعة", right=right, y=height - footer_h + 14, size=24, fill=COLORS["footer"], bold=True)
+    draw_text(draw, "الجمعة والسبت عطلة", left=PAD, y=height - footer_h + 16, size=22, fill=COLORS["footer"])
     buf = io.BytesIO()
     img.save(buf, format="PNG", optimize=True)
     return buf.getvalue()

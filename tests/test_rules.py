@@ -42,7 +42,7 @@ def tasks_of(message, **kw):
         ("الأحد: تقرير مختبر الأحياء، والثلاثاء برزنتيشن هندسة برمجيات",
          [("report", "أحياء", "", "2026-11-22", None),
           ("presentation", "هندسة برمجيات", "", "2026-11-24", None)]),
-        ("الدكتور قال الميد يوم 7/12 الساعة 10", [("midterm", "غير محددة", "", "2026-12-07", "10:00")]),
+        ("الدكتور قال الميد يوم 7/12 الساعة 10", [("midterm", "", "", "2026-12-07", "10:00")]),
         ("كويز بالفيزياء الأربعاء الساعة 2", [("quiz", "فيزياء", "", "2026-11-25", "14:00")]),
     ],
 )
@@ -107,38 +107,39 @@ async def say(svc, text, who=AHMED, private=False, replied_to=None):
 async def test_full_flow_free_mode():
     svc, db = make_service()
 
-    r = await say(svc, "الخميس الجاي امتحان فيزياء الفصل 3 و 4")
+    r = await say(svc, "الخميس الجاي امتحان النفايات الخطرة الفصل 3 و 4")
     assert "تمت إضافة امتحان" in r[0].text and "26 تشرين الثاني" in r[0].text
+    assert "اساسيات النفايات الخطرة" in r[0].text
 
-    # طالبة ثانية تذكر نفس الموعد بصيغة مختلفة -> توثيق بدون تكرار
-    r = await say(svc, "ترى يوم الخميس عدنا امتحان الفيزياء", SARA)
+    # طالبة ثانية تذكر نفس الموعد باسم الأستاذ -> توثيق بدون تكرار
+    r = await say(svc, "ترى يوم الخميس عدنا امتحان عند د. حامد", SARA)
     assert "مسجّل مسبقاً" in r[0].text and "مؤكد من طالبين" in r[0].text
 
-    await say(svc, "باجر واجب رياضيات تمارين 5")
+    await say(svc, "باجر واجب انشائية تمارين 5")
     assert len(db.tasks_between(TODAY, date(2027, 1, 1))) == 2
 
     # تأجيل
-    r = await say(svc, "امتحان الفيزياء تأجل للأحد الجاي")
+    r = await say(svc, "امتحان النفايات تأجل للأحد الجاي")
     assert "تم تعديل" in r[0].text and "كان سابقاً" in r[0].text
-    physics = [t for t in db.tasks_between(TODAY, date(2027, 1, 1)) if t.subject == "فيزياء"][0]
-    assert physics.due_date == date(2026, 11, 22)
+    waste = [t for t in db.tasks_between(TODAY, date(2027, 1, 1)) if t.subject == "اساسيات النفايات الخطرة"][0]
+    assert waste.due_date == date(2026, 11, 22)
 
     # سؤال
     r = await say(svc, "شنو عدنا الأسبوع الجاي؟", SARA)
-    assert "جدول الأسبوع القادم" in r[0].text and "فيزياء" in r[0].text and "رياضيات" not in r[0].text
+    assert "جدول الأسبوع القادم" in r[0].text and "النفايات" in r[0].text and "انشائية" not in r[0].text
 
     # إلغاء (يطلب تأكيد بالأزرار)
-    r = await say(svc, "انلغى واجب الرياضيات")
+    r = await say(svc, "انلغى واجب الانشائية")
     assert "تريد تحذف" in r[0].text
     data = r[0].buttons[0][0].data
     svc.handle_callback(data, AHMED)
-    assert [t.subject for t in db.tasks_between(TODAY, date(2027, 1, 1))] == ["فيزياء"]
+    assert [t.subject for t in db.tasks_between(TODAY, date(2027, 1, 1))] == ["اساسيات النفايات الخطرة"]
 
 
 @pytest.mark.asyncio
 async def test_update_by_replying_to_card():
     svc, db = make_service()
-    r = await say(svc, "الأربعاء كويز كيمياء")
+    r = await say(svc, "الأربعاء كويز تلوث التربة")
     card = r[0].text
     r = await say(svc, "تأجل للخميس الساعة 10", replied_to=card)
     task = db.tasks_between(TODAY, date(2027, 1, 1))[0]
@@ -148,7 +149,7 @@ async def test_update_by_replying_to_card():
 @pytest.mark.asyncio
 async def test_ambiguous_update_asks_which():
     svc, db = make_service()
-    await say(svc, "الأحد كويز كيمياء")
-    await say(svc, "الأربعاء كويز كيمياء")
-    r = await say(svc, "كويز الكيمياء تأجل للخميس", private=True)
+    await say(svc, "الأحد كويز تلوث التربة")
+    await say(svc, "الأربعاء كويز تلوث التربة")
+    r = await say(svc, "كويز التربة تأجل للخميس", private=True)
     assert "أكثر من موعد" in r[0].text
